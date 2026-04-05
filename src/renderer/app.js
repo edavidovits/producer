@@ -67,6 +67,8 @@ let workspaces = [];
 let activeWorkspaceIdx = -1;
 let sidebarCollapsed = false;
 let nextWorkspaceId = 1;
+let workspaceDragState = null;
+let workspaceClickSuppressUntil = 0;
 
 // Each workspace: { id, name, sessions: [], activeSessionIdx, fileViewerState }
 // Each session: { id, name, named, term, fitAddon, container, pendingInput, hasCapturedFirstPrompt, animateName }
@@ -138,6 +140,129 @@ function truncateTabName(text) {
 
 function getDefaultSessionName(idx) {
   return "Session " + (idx + 1);
+}
+
+function moveWorkspace(fromIdx, toIdx) {
+  if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+  const activeWs = workspaces[activeWorkspaceIdx];
+  const moved = workspaces.splice(fromIdx, 1)[0];
+  workspaces.splice(toIdx, 0, moved);
+  activeWorkspaceIdx = workspaces.indexOf(activeWs);
+}
+
+function beginWorkspaceDrag(state, event) {
+  const { row, placeholder } = state;
+  const rect = row.getBoundingClientRect();
+  state.dragging = true;
+  state.offsetY = event.clientY - rect.top;
+
+  placeholder.style.height = rect.height + "px";
+  workspaceList.insertBefore(placeholder, row);
+
+  row.classList.add("dragging");
+  row.style.width = rect.width + "px";
+  row.style.left = rect.left + "px";
+  row.style.top = rect.top + "px";
+}
+
+function updateWorkspaceDrag(state, event) {
+  const { row, placeholder } = state;
+  row.style.top = event.clientY - state.offsetY + "px";
+
+  const siblings = Array.from(workspaceList.children).filter(
+    (child) => child !== row && child !== placeholder
+  );
+
+  let beforeNode = null;
+  for (const child of siblings) {
+    const rect = child.getBoundingClientRect();
+    if (event.clientY < rect.top + rect.height / 2) {
+      beforeNode = child;
+      break;
+    }
+  }
+
+  workspaceList.insertBefore(placeholder, beforeNode);
+}
+
+function cleanupWorkspaceDrag(state) {
+  const { row, placeholder, onPointerMove, onPointerUp } = state;
+  row.removeEventListener("pointermove", onPointerMove);
+  row.removeEventListener("pointerup", onPointerUp);
+  row.removeEventListener("pointercancel", onPointerUp);
+  if (row.hasPointerCapture(state.pointerId)) {
+    row.releasePointerCapture(state.pointerId);
+  }
+  placeholder.remove();
+  row.classList.remove("dragging");
+  row.style.width = "";
+  row.style.left = "";
+  row.style.top = "";
+}
+
+function attachWorkspaceDrag(row, idx) {
+  row.addEventListener("pointerdown", (event) => {
+    if (workspaceDragState) return;
+    if (event.button !== 0) return;
+    if (
+      event.target.closest(".ws-action") ||
+      event.target.closest(".ws-rename-input")
+    ) {
+      return;
+    }
+
+    const state = {
+      row: row,
+      fromIdx: idx,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      dragging: false,
+      placeholder: document.createElement("div"),
+    };
+    state.placeholder.className = "ws-row-placeholder";
+
+    state.onPointerMove = (moveEvent) => {
+      if (!state.dragging && Math.abs(moveEvent.clientY - state.startY) < 6) {
+        return;
+      }
+      if (!state.dragging) {
+        beginWorkspaceDrag(state, moveEvent);
+      }
+      updateWorkspaceDrag(state, moveEvent);
+    };
+
+    state.onPointerUp = () => {
+      const didDrag = state.dragging;
+      let toIdx = -1;
+      if (didDrag) {
+        const orderedNodes = Array.from(workspaceList.children).filter(
+          (child) => child !== row
+        );
+        toIdx = orderedNodes.indexOf(state.placeholder);
+      }
+      cleanupWorkspaceDrag(state);
+      workspaceDragState = null;
+
+      if (!didDrag) return;
+
+      workspaceClickSuppressUntil = performance.now() + 250;
+      if (toIdx === -1 || toIdx === state.fromIdx) {
+        renderSidebar();
+        return;
+      }
+
+      moveWorkspace(state.fromIdx, toIdx);
+      // Re-switch to active workspace to ensure terminals/tabs/viewer are consistent
+      switchWorkspace(activeWorkspaceIdx);
+      saveWorkspaceState();
+    };
+
+    workspaceDragState = state;
+    row.setPointerCapture(event.pointerId);
+    row.addEventListener("pointermove", state.onPointerMove);
+    row.addEventListener("pointerup", state.onPointerUp);
+    row.addEventListener("pointercancel", state.onPointerUp);
+  });
 }
 
 // ─── Active workspace helpers ───
@@ -296,6 +421,9 @@ function fitActiveTerminal() {
   });
 }
 
+let tabDragState = null;
+let tabClickSuppressUntil = 0;
+
 function renderTabs() {
   const ws = activeWorkspace();
   tabStrip.innerHTML = "";
@@ -317,7 +445,102 @@ function renderTabs() {
       '<span class="tab-action tab-close" title="Close"><svg width="10" height="10"><use href="#icon-close" /></svg></span>' +
       "</span>";
 
+    // Drag to reorder tabs
+    tab.addEventListener("pointerdown", (event) => {
+      if (tabDragState) return;
+      if (event.button !== 0) return;
+      if (event.target.closest(".tab-action")) return;
+
+      const tState = {
+        tab, fromIdx: i, pointerId: event.pointerId,
+        startX: event.clientX, dragging: false,
+        placeholder: document.createElement("div"),
+        offsetX: 0,
+      };
+      tState.placeholder.className = "tab tab-placeholder";
+      tState.placeholder.style.height = "100%";
+
+      tState.onPointerMove = (me) => {
+        if (!tState.dragging && Math.abs(me.clientX - tState.startX) < 6) return;
+        if (!tState.dragging) {
+          const rect = tab.getBoundingClientRect();
+          tState.dragging = true;
+          tState.offsetX = me.clientX - rect.left;
+          tState.placeholder.style.width = rect.width + "px";
+          tabStrip.insertBefore(tState.placeholder, tab);
+          tab.classList.add("tab-dragging");
+          tab.style.width = rect.width + "px";
+          tab.style.position = "fixed";
+          tab.style.zIndex = "1000";
+          tab.style.top = rect.top + "px";
+          tab.style.left = rect.left + "px";
+        }
+        tab.style.left = (me.clientX - tState.offsetX) + "px";
+        // Find insertion point
+        const siblings = Array.from(tabStrip.children).filter(
+          (c) => c !== tab && c !== tState.placeholder && !c.classList.contains("tab-add")
+        );
+        let inserted = false;
+        for (const sib of siblings) {
+          const sr = sib.getBoundingClientRect();
+          if (me.clientX < sr.left + sr.width / 2) {
+            tabStrip.insertBefore(tState.placeholder, sib);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted && siblings.length > 0) {
+          const addBtn = tabStrip.querySelector(".tab-add");
+          tabStrip.insertBefore(tState.placeholder, addBtn);
+        }
+      };
+
+      tState.onPointerUp = () => {
+        const didDrag = tState.dragging;
+        // Determine index from placeholder position BEFORE cleanup
+        let toIdx = -1;
+        if (didDrag) {
+          const siblings = Array.from(tabStrip.children).filter(
+            (c) => c !== tab && !c.classList.contains("tab-add")
+          );
+          toIdx = siblings.indexOf(tState.placeholder);
+        }
+        tab.removeEventListener("pointermove", tState.onPointerMove);
+        tab.removeEventListener("pointerup", tState.onPointerUp);
+        tab.removeEventListener("pointercancel", tState.onPointerUp);
+        if (tab.hasPointerCapture(tState.pointerId)) {
+          tab.releasePointerCapture(tState.pointerId);
+        }
+        if (didDrag) {
+          tState.placeholder.remove();
+          tab.classList.remove("tab-dragging");
+          tab.style.position = "";
+          tab.style.zIndex = "";
+          tab.style.top = "";
+          tab.style.left = "";
+          tab.style.width = "";
+          if (toIdx !== -1 && toIdx !== tState.fromIdx) {
+            const activeSession = ws.sessions[ws.activeSessionIdx];
+            const moved = ws.sessions.splice(tState.fromIdx, 1)[0];
+            ws.sessions.splice(toIdx, 0, moved);
+            ws.activeSessionIdx = ws.sessions.indexOf(activeSession);
+            activateTab(ws.activeSessionIdx);
+          }
+          tabClickSuppressUntil = performance.now() + 250;
+        }
+        tabDragState = null;
+        renderTabs();
+      };
+
+      tabDragState = tState;
+      tab.setPointerCapture(event.pointerId);
+      tab.addEventListener("pointermove", tState.onPointerMove);
+      tab.addEventListener("pointerup", tState.onPointerUp);
+      tab.addEventListener("pointercancel", tState.onPointerUp);
+    });
+
     tab.addEventListener("click", (e) => {
+      if (tabClickSuppressUntil && performance.now() < tabClickSuppressUntil) return;
       if (e.target.closest(".tab-close")) {
         closeTab(i);
       } else if (e.target.closest(".tab-rename")) {
@@ -1013,7 +1236,14 @@ function renderSidebar() {
       "</button>" +
       "</span>";
 
+    attachWorkspaceDrag(row, i);
+
     row.addEventListener("click", (e) => {
+      if (performance.now() < workspaceClickSuppressUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.target.closest(".ws-rename")) {
         startRenameWorkspace(i);
       } else if (e.target.closest(".ws-delete")) {

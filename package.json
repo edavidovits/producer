@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder --mac --dir",
+    "build": "electron-builder --mac --dir && cp -r dist/mac-arm64/Producer.app /Applications/",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty"
   },
@@ -18,9 +18,11 @@
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
       "target": "dir",
-      "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.plist",
-      "hardenedRuntime": false
+      "identity": "Producer Dev",
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "Producer needs access to your files to display them in the file viewer.",
+        "NSDesktopFolderUsageDescription": "Producer needs access to your files to display them in the file viewer."
+      }
     },
     "files": [
       "src/**/*",

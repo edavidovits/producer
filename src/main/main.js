@@ -81,7 +81,7 @@ function createSession(cwd) {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
-    cwd: cwd || DEFAULT_CWD,
+    cwd: cwd || process.env.HOME || DEFAULT_CWD,
     env: { ...process.env, TERM: "xterm-256color" },
   });
 
