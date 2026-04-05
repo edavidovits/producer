@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Producer</title>
+    <link
+      rel="stylesheet"
+      href="../../node_modules/@xterm/xterm/css/xterm.css"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- SVG icon sprite -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display: none">
+      <symbol id="icon-folder" viewBox="0 0 16 16">
+        <path
+          d="M2 4.5C2 3.67 2.67 3 3.5 3H6.17a1 1 0 0 1 .7.29L8 4.41h4.5c.83 0 1.5.67 1.5 1.5v5.59c0 .83-.67 1.5-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5V4.5z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+      </symbol>
+      <symbol id="icon-file" viewBox="0 0 16 16">
+        <path
+          d="M4.5 2h4.59a1 1 0 0 1 .7.29l2.92 2.92a1 1 0 0 1 .29.7V13a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path d="M9 2v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+      </symbol>
+      <symbol id="icon-markdown" viewBox="0 0 16 16">
+        <rect
+          x="1.5"
+          y="3.5"
+          width="13"
+          height="9"
+          rx="1"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path
+          d="M4 10V6l2 2.5L8 6v4M11 10l-1.5-2H11V6h1v2h1.5L12 10"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
+      <symbol id="icon-image" viewBox="0 0 16 16">
+        <rect
+          x="2"
+          y="2"
+          width="12"
+          height="12"
+          rx="1.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <circle cx="5.5" cy="5.5" r="1.25" fill="currentColor" />
+        <path
+          d="M2 11l3-3 2 2 3-3 4 4v1.5A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5V11z"
+          fill="currentColor"
+          opacity="0.25"
+        />
+      </symbol>
+      <symbol id="icon-code" viewBox="0 0 16 16">
+        <path
+          d="M5 4L1.5 8 5 12M11 4l3.5 4L11 12M9 2l-2 12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
+      <symbol id="icon-config" viewBox="0 0 16 16">
+        <circle cx="8" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+        <path
+          d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+        />
+      </symbol>
+      <symbol id="icon-doc" viewBox="0 0 16 16">
+        <path
+          d="M4.5 2h4.59a1 1 0 0 1 .7.29l2.92 2.92a1 1 0 0 1 .29.7V13a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path d="M6 7h4M6 9.5h3" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
+      </symbol>
+      <symbol id="icon-pdf" viewBox="0 0 16 16">
+        <path
+          d="M4.5 2h4.59a1 1 0 0 1 .7.29l2.92 2.92a1 1 0 0 1 .29.7V13a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path d="M9 2v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+        <text
+          x="8"
+          y="11.5"
+          text-anchor="middle"
+          font-size="4.5"
+          font-weight="700"
+          fill="currentColor"
+          font-family="sans-serif"
+        >
+          PDF
+        </text>
+      </symbol>
+      <symbol id="icon-table" viewBox="0 0 16 16">
+        <rect
+          x="2"
+          y="2"
+          width="12"
+          height="12"
+          rx="1.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path d="M2 6h12M2 10h12M6 2v12" stroke="currentColor" stroke-width="1" />
+      </symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 16 16">
+        <path
+          d="M10 12L6 8l4-4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
+      <symbol id="icon-home" viewBox="0 0 16 16">
+        <path
+          d="M2.5 7.5L8 2.5l5.5 5M4 6.5V13h3v-3h2v3h3V6.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
+      <symbol id="icon-close" viewBox="0 0 16 16">
+        <path
+          d="M4 4l8 8M12 4l-8 8"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+        />
+      </symbol>
+      <symbol id="icon-plus" viewBox="0 0 16 16">
+        <path
+          d="M8 3v10M3 8h10"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+        />
+      </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 16 16">
+        <rect
+          x="1.5"
+          y="2.5"
+          width="13"
+          height="11"
+          rx="1.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path
+          d="M4.5 6.5L7 8.5l-2.5 2M8.5 10.5h3"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 16 16">
+        <path
+          d="M3 8.5l3.5 3.5L13 4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
+      <symbol id="icon-pencil" viewBox="0 0 16 16">
+        <path
+          d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <path d="M9.5 3.5l3 3" fill="none" stroke="currentColor" stroke-width="1.2" />
+      </symbol>
+    </svg>
+
+    <div id="app">
+      <!-- Top bar: traffic lights + tab strip -->
+      <div id="topbar">
+        <div id="topbar-left">
+          <!-- traffic light space -->
+        </div>
+        <div id="tab-strip">
+          <!-- tabs + new-tab button injected by JS -->
+        </div>
+      </div>
+
+      <!-- Main content -->
+      <div id="main">
+        <!-- Left: Claude Code terminal -->
+        <div id="terminal-pane">
+          <div id="terminal-body">
+            <!-- terminal containers injected per-tab by JS -->
+          </div>
+        </div>
+
+        <!-- Resize handle -->
+        <div id="resize-handle"></div>
+
+        <!-- Right: File viewer -->
+        <div id="viewer-pane">
+          <div id="viewer-toolbar">
+            <button id="btn-back" class="icon-btn" title="Back">
+              <svg width="16" height="16"><use href="#icon-chevron-left" /></svg>
+            </button>
+            <button id="btn-home" class="icon-btn" title="Home">
+              <svg width="16" height="16"><use href="#icon-home" /></svg>
+            </button>
+            <div id="breadcrumb"></div>
+          </div>
+          <!-- File preview header (shown when viewing a file) -->
+          <div id="file-header" class="hidden">
+            <div id="file-header-info">
+              <span id="file-header-icon"></span>
+              <span id="file-header-name"></span>
+            </div>
+            <div id="file-header-actions">
+              <button id="btn-edit-file" class="icon-btn hidden" title="Edit">
+                <svg width="16" height="16"><use href="#icon-pencil" /></svg>
+              </button>
+              <button id="btn-close-file" class="icon-btn" title="Close">
+                <svg width="16" height="16"><use href="#icon-close" /></svg>
+              </button>
+            </div>
+          </div>
+          <div id="viewer-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
