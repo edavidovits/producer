@@ -168,26 +168,6 @@
           stroke-linecap="round"
         />
       </symbol>
-      <symbol id="icon-terminal" viewBox="0 0 16 16">
-        <rect
-          x="1.5"
-          y="2.5"
-          width="13"
-          height="11"
-          rx="1.5"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.2"
-        />
-        <path
-          d="M4.5 6.5L7 8.5l-2.5 2M8.5 10.5h3"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </symbol>
       <symbol id="icon-check" viewBox="0 0 16 16">
         <path
           d="M3 8.5l3.5 3.5L13 4"
@@ -209,58 +189,114 @@
         />
         <path d="M9.5 3.5l3 3" fill="none" stroke="currentColor" stroke-width="1.2" />
       </symbol>
+      <symbol id="icon-sidebar" viewBox="0 0 16 16">
+        <rect
+          x="1.5"
+          y="2.5"
+          width="13"
+          height="11"
+          rx="1.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+        />
+        <path d="M5.5 2.5v11" stroke="currentColor" stroke-width="1.2" />
+      </symbol>
+      <symbol id="icon-trash" viewBox="0 0 16 16">
+        <path
+          d="M3 4.5h10M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M4.5 4.5l.5 8.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-8.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
     </svg>
 
     <div id="app">
-      <!-- Top bar: traffic lights + tab strip -->
-      <div id="topbar">
-        <div id="topbar-left">
-          <!-- traffic light space -->
-        </div>
-        <div id="tab-strip">
-          <!-- tabs + new-tab button injected by JS -->
-        </div>
-      </div>
-
-      <!-- Main content -->
-      <div id="main">
-        <!-- Left: Claude Code terminal -->
-        <div id="terminal-pane">
-          <div id="terminal-body">
-            <!-- terminal containers injected per-tab by JS -->
-          </div>
-        </div>
-
-        <!-- Resize handle -->
-        <div id="resize-handle"></div>
-
-        <!-- Right: File viewer -->
-        <div id="viewer-pane">
-          <div id="viewer-toolbar">
-            <button id="btn-back" class="icon-btn" title="Back">
-              <svg width="16" height="16"><use href="#icon-chevron-left" /></svg>
+      <!-- Body: sidebar + main area -->
+      <div id="body-row">
+        <!-- Workspace sidebar -->
+        <div id="sidebar">
+          <div id="sidebar-drag">
+            <button
+              id="sidebar-toggle-open"
+              class="icon-btn icon-btn--sm sidebar-toggle-btn"
+              title="Collapse sidebar"
+            >
+              <svg width="14" height="14"><use href="#icon-sidebar" /></svg>
             </button>
-            <button id="btn-home" class="icon-btn" title="Home">
-              <svg width="16" height="16"><use href="#icon-home" /></svg>
+          </div>
+          <div id="sidebar-header">
+            <span class="sidebar-title">Workspaces</span>
+            <button id="btn-new-workspace" class="icon-btn icon-btn--sm" title="New workspace">
+              <svg width="14" height="14"><use href="#icon-plus" /></svg>
             </button>
-            <div id="breadcrumb"></div>
           </div>
-          <!-- File preview header (shown when viewing a file) -->
-          <div id="file-header" class="hidden">
-            <div id="file-header-info">
-              <span id="file-header-icon"></span>
-              <span id="file-header-name"></span>
+          <div id="workspace-list">
+            <!-- workspace rows injected by JS -->
+          </div>
+        </div>
+
+        <!-- Sidebar resize handle -->
+        <div id="sidebar-resize-handle"></div>
+
+        <!-- Main content -->
+        <div id="main">
+          <!-- Left: Claude Code terminal -->
+          <div id="terminal-pane">
+            <!-- Tab strip lives in the terminal pane now -->
+            <div id="topbar">
+              <div id="topbar-left">
+                <button
+                  id="sidebar-toggle-closed"
+                  class="icon-btn icon-btn--sm sidebar-toggle-btn"
+                  title="Expand sidebar"
+                >
+                  <svg width="14" height="14"><use href="#icon-sidebar" /></svg>
+                </button>
+              </div>
+              <div id="tab-strip">
+                <!-- tabs injected by JS -->
+              </div>
             </div>
-            <div id="file-header-actions">
-              <button id="btn-edit-file" class="icon-btn hidden" title="Edit">
-                <svg width="16" height="16"><use href="#icon-pencil" /></svg>
-              </button>
-              <button id="btn-close-file" class="icon-btn" title="Close">
-                <svg width="16" height="16"><use href="#icon-close" /></svg>
-              </button>
+            <div id="terminal-body">
+              <!-- terminal containers injected per-tab by JS -->
             </div>
           </div>
-          <div id="viewer-content"></div>
+
+          <!-- Resize handle -->
+          <div id="resize-handle"></div>
+
+          <!-- Right: File viewer -->
+          <div id="viewer-pane">
+            <div id="viewer-toolbar">
+              <button id="btn-back" class="icon-btn" title="Back">
+                <svg width="16" height="16"><use href="#icon-chevron-left" /></svg>
+              </button>
+              <button id="btn-home" class="icon-btn" title="Home">
+                <svg width="16" height="16"><use href="#icon-home" /></svg>
+              </button>
+              <div id="breadcrumb"></div>
+            </div>
+            <!-- File preview header (shown when viewing a file) -->
+            <div id="file-header" class="hidden">
+              <div id="file-header-info">
+                <span id="file-header-icon"></span>
+                <span id="file-header-name"></span>
+              </div>
+              <div id="file-header-actions">
+                <button id="btn-edit-file" class="icon-btn hidden" title="Edit">
+                  <svg width="16" height="16"><use href="#icon-pencil" /></svg>
+                </button>
+                <button id="btn-close-file" class="icon-btn" title="Close">
+                  <svg width="16" height="16"><use href="#icon-close" /></svg>
+                </button>
+              </div>
+            </div>
+            <div id="viewer-content"></div>
+          </div>
         </div>
       </div>
     </div>

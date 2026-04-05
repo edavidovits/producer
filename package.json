@@ -7,8 +7,27 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "build": "electron-builder --mac --dir",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty"
+  },
+  "build": {
+    "appId": "com.eytan.producer",
+    "productName": "Producer",
+    "mac": {
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity",
+      "target": "dir",
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "hardenedRuntime": false
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ]
   },
   "keywords": [],
   "author": "Eytan Davidovits",
@@ -18,13 +37,13 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-    "electron": "^41.1.1",
     "mammoth": "^1.12.0",
     "marked": "^17.0.5",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
+    "electron": "^41.1.1",
     "electron-builder": "^26.8.1"
   }
 }
