@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const pty = require("node-pty");
@@ -8,9 +8,6 @@ let mainWindow;
 
 const sessions = {};
 let nextSessionId = 1;
-
-const DEFAULT_CWD =
-  "/Users/eytan/Davidovits & Co Dropbox/Eytan Davidovits/eytan-os";
 
 // ─── Window state persistence ───
 
@@ -81,7 +78,7 @@ function createSession(cwd) {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
-    cwd: cwd || process.env.HOME || DEFAULT_CWD,
+    cwd: cwd || process.env.HOME,
     env: { ...process.env, TERM: "xterm-256color" },
   });
 
@@ -130,6 +127,20 @@ app.whenReady().then(() => {
 
   ipcMain.handle("app:getUserDataPath", () => {
     return app.getPath("userData");
+  });
+
+  ipcMain.handle("app:getHomePath", () => {
+    return app.getPath("home");
+  });
+
+  ipcMain.handle("app:pickFolder", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openDirectory"],
+      title: "Choose your workspace folder",
+      message: "Select the folder Producer should use as your file viewer home.",
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 
   ipcMain.handle("session:create", (_event, cwd) => {

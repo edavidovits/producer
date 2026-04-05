@@ -9,10 +9,9 @@ const { marked } = require("marked");
 const mammoth = require("mammoth");
 marked.setOptions({ gfm: true, breaks: true });
 
-const DEFAULT_DIR =
-  "/Users/eytan/Davidovits & Co Dropbox/Eytan Davidovits/eytan-os";
-
-// Workspace state persistence path -- resolved async via IPC
+// Home directory -- configurable, resolved at init
+let DEFAULT_DIR = null;
+let SETTINGS_FILE = null;
 let WORKSPACE_FILE = null;
 
 // Light terminal theme
@@ -1052,6 +1051,24 @@ btnHome.addEventListener("click", () => {
   showDirectory(DEFAULT_DIR);
 });
 
+document.getElementById("btn-change-home").addEventListener("click", async () => {
+  const picked = await window.ipc.invoke("app:pickFolder");
+  if (!picked) return;
+  DEFAULT_DIR = picked;
+  try {
+    const settings = { homeDir: picked };
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  } catch {}
+  slideDirection = "back";
+  const ws = activeWorkspace();
+  if (ws) {
+    ws.fileViewerState.navHistory = [];
+    ws.fileViewerState.currentDir = DEFAULT_DIR;
+    ws.fileViewerState.currentPath = DEFAULT_DIR;
+  }
+  showDirectory(DEFAULT_DIR);
+});
+
 btnCloseFile.addEventListener("click", () => {
   slideDirection = "back";
   if (isEditing) saveEditor();
@@ -1386,12 +1403,36 @@ window.addEventListener("resize", () => {
   resizeTimeout = setTimeout(fitActiveTerminal, 50);
 });
 
+// Save workspace state when app is closing
+window.addEventListener("beforeunload", () => {
+  saveWorkspaceState();
+});
+
+// Also save periodically (every 10s) to catch navigation changes
+setInterval(saveWorkspaceState, 10000);
+
 // ─── Init ───
 
 (async function init() {
-  // Resolve persistence path
+  // Resolve persistence paths
   const userDataPath = await window.ipc.invoke("app:getUserDataPath");
   WORKSPACE_FILE = path.join(userDataPath, "workspaces.json");
+  SETTINGS_FILE = path.join(userDataPath, "settings.json");
+
+  // Load or prompt for home directory
+  let settings = {};
+  try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")); } catch {}
+
+  if (settings.homeDir && fs.existsSync(settings.homeDir)) {
+    DEFAULT_DIR = settings.homeDir;
+  } else {
+    // First launch -- prompt user to pick a folder
+    const homePath = await window.ipc.invoke("app:getHomePath");
+    const picked = await window.ipc.invoke("app:pickFolder");
+    DEFAULT_DIR = picked || homePath;
+    settings.homeDir = DEFAULT_DIR;
+    try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch {}
+  }
 
   const saved = loadWorkspaceState();
 
