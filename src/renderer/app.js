@@ -87,6 +87,8 @@ function saveWorkspaceState() {
     workspaces: workspaces.map((ws) => ({
       id: ws.id,
       name: ws.name,
+      activeSessionIdx: ws.activeSessionIdx,
+      sessionNames: ws.sessions.map((s) => s.name),
       fileViewerState: {
         currentPath: ws.fileViewerState.currentPath,
         currentDir: ws.fileViewerState.currentDir,
@@ -1467,11 +1469,22 @@ setInterval(saveWorkspaceState, 10000);
 
     renderSidebar();
 
-    // Create an initial tab for each workspace sequentially
+    // Recreate tabs for each workspace from saved names
     async function initWorkspaceTabs() {
       for (let i = 0; i < workspaces.length; i++) {
         activeWorkspaceIdx = i;
-        await createTab("Session 1");
+        const wsData = saved.workspaces[i];
+        const names = wsData.sessionNames && wsData.sessionNames.length > 0
+          ? wsData.sessionNames
+          : ["Session 1"];
+        for (const name of names) {
+          const session = await createTab(name);
+          if (session) session.named = true; // don't auto-rename saved tabs
+        }
+        // Restore active tab index
+        if (wsData.activeSessionIdx >= 0 && wsData.activeSessionIdx < names.length) {
+          workspaces[i].activeSessionIdx = wsData.activeSessionIdx;
+        }
       }
       // Switch to the saved active workspace
       switchWorkspace(targetIdx);

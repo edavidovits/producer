@@ -124,8 +124,8 @@ body {
   height: 42px;
   padding: 0 12px;
   padding-bottom: 4px;
-  min-width: 120px;
-  max-width: 200px;
+  min-width: 180px;
+  max-width: 300px;
   overflow: hidden;
   justify-content: flex-start;
   text-align: left;
@@ -188,6 +188,10 @@ body {
 
 .tab:hover .tab-actions {
   opacity: 1;
+  pointer-events: none;
+}
+
+.tab:hover .tab-actions .tab-action {
   pointer-events: auto;
 }
 
