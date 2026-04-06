@@ -446,29 +446,28 @@ function renderTabs() {
       '<span class="tab-action tab-close" title="Close"><svg width="10" height="10"><use href="#icon-close" /></svg></span>' +
       "</span>";
 
-    // Drag to reorder tabs
-    tab.addEventListener("pointerdown", (event) => {
-      if (tabDragState) return;
+    // Drag to reorder tabs (mousedown, no pointer capture)
+    tab.addEventListener("mousedown", (event) => {
       if (event.button !== 0) return;
       if (event.target.closest(".tab-action")) return;
 
-      const tState = {
-        tab, fromIdx: i, pointerId: event.pointerId,
-        startX: event.clientX, dragging: false,
-        placeholder: document.createElement("div"),
-        offsetX: 0,
-      };
-      tState.placeholder.className = "tab tab-placeholder";
-      tState.placeholder.style.height = "100%";
+      const startX = event.clientX;
+      const fromIdx = i;
+      let dragging = false;
+      let placeholder = null;
+      let offsetX = 0;
 
-      tState.onPointerMove = (me) => {
-        if (!tState.dragging && Math.abs(me.clientX - tState.startX) < 6) return;
-        if (!tState.dragging) {
+      function onMove(me) {
+        if (!dragging && Math.abs(me.clientX - startX) < 6) return;
+        if (!dragging) {
+          dragging = true;
           const rect = tab.getBoundingClientRect();
-          tState.dragging = true;
-          tState.offsetX = me.clientX - rect.left;
-          tState.placeholder.style.width = rect.width + "px";
-          tabStrip.insertBefore(tState.placeholder, tab);
+          offsetX = me.clientX - rect.left;
+          placeholder = document.createElement("div");
+          placeholder.className = "tab tab-placeholder";
+          placeholder.style.height = "100%";
+          placeholder.style.width = rect.width + "px";
+          tabStrip.insertBefore(placeholder, tab);
           tab.classList.add("tab-dragging");
           tab.style.width = rect.width + "px";
           tab.style.position = "fixed";
@@ -476,68 +475,54 @@ function renderTabs() {
           tab.style.top = rect.top + "px";
           tab.style.left = rect.left + "px";
         }
-        tab.style.left = (me.clientX - tState.offsetX) + "px";
-        // Find insertion point
+        tab.style.left = (me.clientX - offsetX) + "px";
         const siblings = Array.from(tabStrip.children).filter(
-          (c) => c !== tab && c !== tState.placeholder && !c.classList.contains("tab-add")
+          (c) => c !== tab && c !== placeholder && !c.classList.contains("tab-add")
         );
         let inserted = false;
         for (const sib of siblings) {
           const sr = sib.getBoundingClientRect();
           if (me.clientX < sr.left + sr.width / 2) {
-            tabStrip.insertBefore(tState.placeholder, sib);
+            tabStrip.insertBefore(placeholder, sib);
             inserted = true;
             break;
           }
         }
         if (!inserted && siblings.length > 0) {
           const addBtn = tabStrip.querySelector(".tab-add");
-          tabStrip.insertBefore(tState.placeholder, addBtn);
+          tabStrip.insertBefore(placeholder, addBtn);
         }
-      };
+      }
 
-      tState.onPointerUp = () => {
-        const didDrag = tState.dragging;
-        // Determine index from placeholder position BEFORE cleanup
-        let toIdx = -1;
-        if (didDrag) {
+      function onUp() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        if (dragging) {
           const siblings = Array.from(tabStrip.children).filter(
             (c) => c !== tab && !c.classList.contains("tab-add")
           );
-          toIdx = siblings.indexOf(tState.placeholder);
-        }
-        tab.removeEventListener("pointermove", tState.onPointerMove);
-        tab.removeEventListener("pointerup", tState.onPointerUp);
-        tab.removeEventListener("pointercancel", tState.onPointerUp);
-        if (tab.hasPointerCapture(tState.pointerId)) {
-          tab.releasePointerCapture(tState.pointerId);
-        }
-        if (didDrag) {
-          tState.placeholder.remove();
+          const toIdx = siblings.indexOf(placeholder);
+          placeholder.remove();
           tab.classList.remove("tab-dragging");
           tab.style.position = "";
           tab.style.zIndex = "";
           tab.style.top = "";
           tab.style.left = "";
           tab.style.width = "";
-          if (toIdx !== -1 && toIdx !== tState.fromIdx) {
+          if (toIdx !== -1 && toIdx !== fromIdx) {
             const activeSession = ws.sessions[ws.activeSessionIdx];
-            const moved = ws.sessions.splice(tState.fromIdx, 1)[0];
+            const moved = ws.sessions.splice(fromIdx, 1)[0];
             ws.sessions.splice(toIdx, 0, moved);
             ws.activeSessionIdx = ws.sessions.indexOf(activeSession);
             activateTab(ws.activeSessionIdx);
           }
           tabClickSuppressUntil = performance.now() + 250;
+          renderTabs();
         }
-        tabDragState = null;
-        renderTabs();
-      };
+      }
 
-      tabDragState = tState;
-      tab.setPointerCapture(event.pointerId);
-      tab.addEventListener("pointermove", tState.onPointerMove);
-      tab.addEventListener("pointerup", tState.onPointerUp);
-      tab.addEventListener("pointercancel", tState.onPointerUp);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     });
 
     tab.addEventListener("click", (e) => {
