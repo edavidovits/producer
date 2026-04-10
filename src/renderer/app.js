@@ -1,5 +1,19 @@
 // Producer -- renderer (with workspaces)
 
+// ─── Renderer error handlers ───
+function rendererLog(level, msg) {
+  try { window.ipc.send("log:renderer", { level, msg }); } catch {}
+}
+
+window.onerror = (message, source, lineno, colno, error) => {
+  rendererLog("error", `window.onerror: ${message} at ${source}:${lineno}:${colno}${error && error.stack ? "\n" + error.stack : ""}`);
+};
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason;
+  rendererLog("error", `Unhandled rejection: ${reason && reason.stack ? reason.stack : reason}`);
+});
+
 const fs = require("fs");
 const path = require("path");
 const { Terminal } = require("@xterm/xterm");
@@ -98,7 +112,7 @@ function saveWorkspaceState() {
   try {
     fs.writeFileSync(WORKSPACE_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
-    // silently fail
+    rendererLog("warn", `Failed to save workspace state: ${e.message}`);
   }
 }
 
@@ -107,7 +121,8 @@ function loadWorkspaceState() {
   try {
     const raw = fs.readFileSync(WORKSPACE_FILE, "utf-8");
     return JSON.parse(raw);
-  } catch {
+  } catch (e) {
+    rendererLog("warn", `Failed to load workspace state: ${e.message}`);
     return null;
   }
 }
@@ -281,6 +296,7 @@ async function createTab(name) {
   if (!ws) return;
 
   const id = await window.ipc.invoke("session:create", DEFAULT_DIR);
+  rendererLog("info", `Tab created: session=${id}, workspace=${ws.id}`);
   const defaultName = getDefaultSessionName(ws.sessions.length);
 
   const container = document.createElement("div");
@@ -394,6 +410,7 @@ function closeTab(idx) {
   if (!ws) return;
   if (ws.sessions.length <= 1) return;
   const s = ws.sessions[idx];
+  rendererLog("info", `Tab closed: session=${s.id}, workspace=${ws.id}`);
   delete sessionMap[s.id];
   window.ipc.send("session:kill", { id: s.id });
   s.term.dispose();
@@ -763,7 +780,8 @@ function readDir(dirPath) {
         path: path.join(dirPath, e.name),
         isDirectory: e.isDirectory(),
       }));
-  } catch {
+  } catch (e) {
+    rendererLog("warn", `Failed to read directory ${dirPath}: ${e.message}`);
     return [];
   }
 }
@@ -771,7 +789,8 @@ function readDir(dirPath) {
 function readFileContent(filePath) {
   try {
     return fs.readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (e) {
+    rendererLog("warn", `Failed to read file ${filePath}: ${e.message}`);
     return null;
   }
 }
@@ -779,7 +798,8 @@ function readFileContent(filePath) {
 function readFileBuffer(filePath) {
   try {
     return fs.readFileSync(filePath);
-  } catch {
+  } catch (e) {
+    rendererLog("warn", `Failed to read file buffer ${filePath}: ${e.message}`);
     return null;
   }
 }
@@ -971,7 +991,9 @@ function showFile(filePath) {
           renderMarkdown(updated);
       });
       unwatchCurrent = () => watcher.close();
-    } catch {}
+    } catch (e) {
+      rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
+    }
   } else if (ext === "docx") {
     const buf = readFileBuffer(filePath);
     if (buf === null) return showError();
@@ -984,7 +1006,8 @@ function showFile(filePath) {
         viewerContent.innerHTML =
           '<div class="docx-body">' + sanitizeHtml(r.value) + "</div>";
       })
-      .catch(() => {
+      .catch((e) => {
+        rendererLog("warn", `Failed to convert docx ${filePath}: ${e.message || e}`);
         const currentWs = activeWorkspace();
         if (currentWs && currentWs.fileViewerState.currentPath === expectedPath) showError();
       });
@@ -1045,7 +1068,9 @@ document.getElementById("btn-change-home").addEventListener("click", async () =>
   try {
     const settings = { homeDir: picked };
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-  } catch {}
+  } catch (e) {
+    rendererLog("warn", `Failed to save settings: ${e.message}`);
+  }
   slideDirection = "back";
   const ws = activeWorkspace();
   if (ws) {
@@ -1099,7 +1124,9 @@ btnEditFile.addEventListener("click", () => {
       editorSaveTimeout = setTimeout(() => {
         try {
           fs.writeFileSync(editingPath, textarea.value, "utf-8");
-        } catch {}
+        } catch (e) {
+          rendererLog("warn", `Failed to auto-save ${editingPath}: ${e.message}`);
+        }
         editorSaveTimeout = null;
       }, 500);
     });
@@ -1113,7 +1140,9 @@ function saveEditor() {
   if (textarea && ws && ws.fileViewerState.currentPath) {
     try {
       fs.writeFileSync(ws.fileViewerState.currentPath, textarea.value, "utf-8");
-    } catch {}
+    } catch (e) {
+      rendererLog("warn", `Failed to save file ${ws.fileViewerState.currentPath}: ${e.message}`);
+    }
   }
 }
 
@@ -1165,6 +1194,7 @@ function deleteWorkspace(idx) {
 
 function switchWorkspace(idx) {
   if (idx < 0 || idx >= workspaces.length) return;
+  rendererLog("info", `Workspace switch: idx=${idx}, id=${workspaces[idx].id}, name=${workspaces[idx].name}`);
 
   // Save current file viewer state is already done via fvState references
   cleanupWatch();
@@ -1408,7 +1438,9 @@ setInterval(saveWorkspaceState, 10000);
 
   // Load or prompt for home directory
   let settings = {};
-  try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")); } catch {}
+  try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")); } catch (e) {
+    rendererLog("warn", `Failed to load settings: ${e.message}`);
+  }
 
   if (settings.homeDir && fs.existsSync(settings.homeDir)) {
     DEFAULT_DIR = settings.homeDir;
@@ -1418,9 +1450,12 @@ setInterval(saveWorkspaceState, 10000);
     const picked = await window.ipc.invoke("app:pickFolder");
     DEFAULT_DIR = picked || homePath;
     settings.homeDir = DEFAULT_DIR;
-    try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch {}
+    try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch (e) {
+      rendererLog("warn", `Failed to save initial settings: ${e.message}`);
+    }
   }
 
+  rendererLog("info", `Renderer init complete, homeDir=${DEFAULT_DIR}`);
   const saved = loadWorkspaceState();
 
   if (saved && saved.workspaces && saved.workspaces.length > 0) {
