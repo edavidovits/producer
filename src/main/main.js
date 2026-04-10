@@ -1,7 +1,18 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog, crashReporter } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const pty = require("node-pty");
+const log = require("./logger");
+
+crashReporter.start({ submitURL: "", uploadToServer: false });
+
+process.on("uncaughtException", (err) => {
+  log.error(`Uncaught exception: ${err.stack || err}`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  log.error(`Unhandled rejection: ${reason && reason.stack ? reason.stack : reason}`);
+});
 
 app.setName("Producer");
 let mainWindow;
@@ -16,7 +27,8 @@ const stateFile = path.join(app.getPath("userData"), "window-state.json");
 function loadWindowState() {
   try {
     return JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-  } catch {
+  } catch (e) {
+    log.warn(`Failed to load window state: ${e.message}`);
     return null;
   }
 }
@@ -28,7 +40,9 @@ function saveWindowState() {
   const isFullScreen = mainWindow.isFullScreen();
   try {
     fs.writeFileSync(stateFile, JSON.stringify({ bounds, isMaximized, isFullScreen }));
-  } catch {}
+  } catch (e) {
+    log.warn(`Failed to save window state: ${e.message}`);
+  }
 }
 
 function createWindow() {
@@ -72,6 +86,7 @@ function createWindow() {
 
 function createSession(cwd) {
   const id = nextSessionId++;
+  log.info(`Session ${id} creating (cwd: ${cwd || "default"})`);
   const shell = process.env.SHELL || "/bin/zsh";
 
   const ptyProcess = pty.spawn(shell, ["-l", "-c", "claude"], {
@@ -90,8 +105,8 @@ function createSession(cwd) {
     }
   });
 
-  ptyProcess.onExit(() => {
-    // Clean up dead session
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    log.info(`Session ${id} exited (code: ${exitCode}, signal: ${signal})`);
     if (sessions[id]) {
       sessions[id].alive = false;
       delete sessions[id];
@@ -105,7 +120,18 @@ function createSession(cwd) {
 }
 
 app.whenReady().then(() => {
+  log.info("App ready");
   createWindow();
+  log.info("Window created");
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    log.error(`Render process gone: reason=${details.reason}, exitCode=${details.exitCode}`);
+  });
+
+  ipcMain.on("log:renderer", (_event, { level, msg }) => {
+    const fn = log[level] || log.info;
+    fn(`[renderer] ${msg}`);
+  });
 
   mainWindow.on("focus", () => {
     globalShortcut.register("CommandOrControl+T", () => {
@@ -157,7 +183,9 @@ app.whenReady().then(() => {
     if (sessions[id] && sessions[id].alive) {
       try {
         sessions[id].pty.resize(cols, rows);
-      } catch (_) {}
+      } catch (e) {
+        log.warn(`Session ${id} resize failed: ${e.message}`);
+      }
     }
   });
 
