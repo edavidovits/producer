@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog, crashReporter } = require("electron");
+const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog, crashReporter, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const pty = require("node-pty");
@@ -167,6 +167,10 @@ app.whenReady().then(() => {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+  });
+
+  ipcMain.handle("app:showInFinder", (_event, filePath) => {
+    return shell.showItemInFolder(filePath);
   });
 
   ipcMain.handle("session:create", (_event, cwd) => {

@@ -952,7 +952,14 @@ function showDirectory(dirPath) {
       iconSvg(getFileIconId(entry), 16) +
       '</span><span class="fi-name">' +
       escapeHtml(entry.name) +
-      "</span>";
+      '</span><button type="button" class="fi-finder icon-btn icon-btn--sm" title="Show in Finder" aria-label="Show in Finder">' +
+      iconSvg("finder", 14) +
+      "</button>";
+    const finderButton = li.querySelector(".fi-finder");
+    finderButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await window.ipc.invoke("app:showInFinder", entry.path);
+    });
     li.addEventListener("click", () => {
       slideDirection = "forward";
       if (entry.isDirectory) {

@@ -799,6 +799,18 @@ body {
   flex: 1;
 }
 
+.fi-finder {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition), background var(--transition), color var(--transition);
+}
+
+.file-item:hover .fi-finder,
+.fi-finder:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* ─── Markdown rendering ─── */
 
 .markdown-body {
