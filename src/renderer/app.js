@@ -979,6 +979,10 @@ function showDirectory(dirPath) {
 }
 
 function showFile(filePath) {
+  // Guard: if the path is actually a directory, show it as a directory instead
+  try {
+    if (fs.statSync(filePath).isDirectory()) return showDirectory(filePath);
+  } catch {}
   cleanupWatch();
   cleanupEditorTimeout();
   const ws = activeWorkspace();
@@ -991,13 +995,17 @@ function showFile(filePath) {
     if (content === null) return showError();
     renderMarkdown(content);
     try {
+      let watchDebounce = null;
       const watcher = fs.watch(filePath, () => {
-        const updated = readFileContent(filePath);
-        const currentWs = activeWorkspace();
-        if (updated !== null && currentWs && currentWs.fileViewerState.currentPath === filePath)
-          renderMarkdown(updated);
+        if (watchDebounce) clearTimeout(watchDebounce);
+        watchDebounce = setTimeout(() => {
+          const updated = readFileContent(filePath);
+          const currentWs = activeWorkspace();
+          if (updated !== null && currentWs && currentWs.fileViewerState.currentPath === filePath)
+            renderMarkdown(updated);
+        }, 100);
       });
-      unwatchCurrent = () => watcher.close();
+      unwatchCurrent = () => { if (watchDebounce) clearTimeout(watchDebounce); watcher.close(); };
     } catch (e) {
       rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
     }
@@ -1234,14 +1242,15 @@ function switchWorkspace(idx) {
   renderTabs();
   renderSidebar();
 
-  // Restore file viewer state
-  const fv = ws.fileViewerState;
-  if (fv.currentPath && fv.currentPath !== fv.currentDir) {
+  // Restore file viewer state — capture values before showDirectory mutates them
+  const savedPath = ws.fileViewerState.currentPath;
+  const savedDir = ws.fileViewerState.currentDir;
+  if (savedPath && savedPath !== savedDir) {
     // Was viewing a file
-    showDirectory(fv.currentDir || DEFAULT_DIR);
-    showFile(fv.currentPath);
+    showDirectory(savedDir || DEFAULT_DIR);
+    showFile(savedPath);
   } else {
-    showDirectory(fv.currentDir || fv.currentPath || DEFAULT_DIR);
+    showDirectory(savedDir || savedPath || DEFAULT_DIR);
   }
 
   saveWorkspaceState();

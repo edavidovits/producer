@@ -1,7 +1,7 @@
 {
   "name": "producer",
   "productName": "Producer",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "PM workspace: Claude Code + file viewer",
   "main": "src/main/main.js",
   "scripts": {
@@ -18,7 +18,10 @@
     "mac": {
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
-      "target": ["dir", "dmg"],
+      "target": [
+        "dir",
+        "dmg"
+      ],
       "identity": "Producer Dev",
       "extendInfo": {
         "NSDocumentsFolderUsageDescription": "Producer needs access to your files to display them in the file viewer.",
@@ -29,8 +32,16 @@
       "title": "Producer",
       "icon": "assets/icon.icns",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "files": [
