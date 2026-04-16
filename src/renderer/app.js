@@ -1014,6 +1014,22 @@ function showDirectory(dirPath) {
   viewerContent.appendChild(list);
   applySlide();
   updateNavButtons();
+
+  // Watch directory for changes (new/deleted files)
+  try {
+    let dirWatchTimeout = null;
+    const dirWatcher = fs.watch(dirPath, () => {
+      clearTimeout(dirWatchTimeout);
+      dirWatchTimeout = setTimeout(() => {
+        const currentWs = activeWorkspace();
+        if (currentWs && currentWs.fileViewerState.currentDir === dirPath && !isViewingFile) {
+          slideDirection = null; // no animation for refresh
+          showDirectory(dirPath);
+        }
+      }, 300);
+    });
+    unwatchCurrent = () => dirWatcher.close();
+  } catch {}
 }
 
 function showFile(filePath) {
