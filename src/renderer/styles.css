@@ -1,4 +1,4 @@
-/* Producer -- warm light theme */
+/* Producer -- theme follows system color scheme */
 
 :root {
   --bg: #fafaf9;
@@ -7,6 +7,8 @@
   --bg-muted: #f0f0ef;
   --bg-hover: #edeae7;
   --bg-active: #e5e2de;
+  --bg-row-active: #e8e7e5;
+  --bg-row-drag: #f3f2f0;
   --fg: #1c1917;
   --fg-secondary: #57534e;
   --fg-muted: #a8a29e;
@@ -24,6 +26,40 @@
   --radius-sm: 5px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
   --transition: 120ms ease;
+  --xterm-color-filter: saturate(1.4) brightness(0.65);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+  --placeholder-bg: rgba(87, 83, 78, 0.06);
+  --placeholder-border: rgba(87, 83, 78, 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1917;
+    --bg-surface: #292524;
+    --bg-sidebar: #1c1917;
+    --bg-muted: #292524;
+    --bg-hover: #44403c;
+    --bg-active: #57534e;
+    --bg-row-active: #292524;
+    --bg-row-drag: #44403c;
+    --fg: #fafaf9;
+    --fg-secondary: #d6d3d1;
+    --fg-muted: #a8a29e;
+    --fg-dim: #a8a29e;
+    --border: #44403c;
+    --border-strong: #57534e;
+    --accent: #fb923c;
+    --accent-light: #9a3412;
+    --accent-blue: #60a5fa;
+    --accent-green: #4ade80;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --xterm-color-filter: none;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.32);
+    --placeholder-bg: rgba(214, 211, 209, 0.06);
+    --placeholder-border: rgba(214, 211, 209, 0.2);
+  }
 }
 
 * {
@@ -70,7 +106,7 @@ body {
   height: 46px;
   display: flex;
   align-items: center;
-  background: #fafaf9;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   padding-right: 12px;
@@ -180,7 +216,7 @@ body {
   gap: 1px;
   padding-right: 6px;
   padding-left: 16px;
-  background: linear-gradient(to right, transparent, #fafaf9 40%);
+  background: linear-gradient(to right, transparent, var(--bg) 40%);
   opacity: 0;
   transition: opacity var(--transition);
   pointer-events: none;
@@ -216,12 +252,12 @@ body {
   opacity: 0.9;
   pointer-events: none !important;
   box-shadow: 0 4px 12px rgba(28, 25, 23, 0.12);
-  background: #fafaf9 !important;
+  background: var(--bg) !important;
 }
 
 .tab-placeholder {
-  background: rgba(87, 83, 78, 0.06);
-  border: 1px dashed rgba(87, 83, 78, 0.15);
+  background: var(--placeholder-bg);
+  border: 1px dashed var(--placeholder-border);
   border-radius: var(--radius-sm);
   pointer-events: none;
 }
@@ -372,24 +408,24 @@ body {
   opacity: 0.92;
   pointer-events: none;
   box-shadow: 0 14px 30px rgba(28, 25, 23, 0.18);
-  background: #f3f2f0;
+  background: var(--bg-row-drag);
 }
 
 .ws-row-placeholder {
   height: 42px;
   border-radius: var(--radius-sm);
-  background: rgba(87, 83, 78, 0.08);
-  border: 1px dashed rgba(87, 83, 78, 0.2);
+  background: var(--placeholder-bg);
+  border: 1px dashed var(--placeholder-border);
 }
 
 .ws-row:hover {
-  background: #e8e7e5;
+  background: var(--bg-row-active);
   color: var(--fg);
 }
 
 .ws-row.active {
   color: var(--fg);
-  background: #e8e7e5;
+  background: var(--bg-row-active);
   font-weight: 600;
 }
 
@@ -442,17 +478,17 @@ body {
 }
 
 .ws-row .ws-actions {
-  background: linear-gradient(to right, transparent, #f0f0ef 50%);
+  background: linear-gradient(to right, transparent, var(--bg-sidebar) 50%);
 }
 
 .ws-row:hover .ws-actions {
   opacity: 1;
   pointer-events: auto;
-  background: linear-gradient(to right, transparent, #e8e7e5 50%);
+  background: linear-gradient(to right, transparent, var(--bg-row-active) 50%);
 }
 
 .ws-row.active .ws-actions {
-  background: linear-gradient(to right, transparent, #e8e7e5 50%);
+  background: linear-gradient(to right, transparent, var(--bg-row-active) 50%);
 }
 
 .ws-row .ws-action {
@@ -575,14 +611,14 @@ body {
 }
 
 .terminal-session .xterm .xterm-scrollable-element > .scrollbar > .slider {
-  background: rgba(0, 0, 0, 0.15) !important;
+  background: var(--scrollbar-thumb) !important;
   border-radius: 4px !important;
   width: 6px !important;
   left: 1px !important;
 }
 
 .terminal-session .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
-  background: rgba(0, 0, 0, 0.3) !important;
+  background: var(--scrollbar-thumb-hover) !important;
 }
 
 .terminal-session .xterm .xterm-scrollable-element > .invisible {
@@ -590,10 +626,10 @@ body {
   transition: opacity 600ms ease !important;
 }
 
-/* Force light-friendly colors on xterm spans -- Claude Code uses 256/truecolor
-   that the 16-color theme can't override */
+/* Force readable colors on xterm spans -- Claude Code uses 256/truecolor
+   that the 16-color theme can't override. Filter is themed via --xterm-color-filter. */
 .terminal-session .xterm-rows span {
-  filter: saturate(1.4) brightness(0.65);
+  filter: var(--xterm-color-filter);
 }
 
 
@@ -642,7 +678,7 @@ body {
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  background: #fafaf9;
+  background: var(--bg);
 }
 
 #breadcrumb {

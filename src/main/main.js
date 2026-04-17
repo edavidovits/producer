@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog, crashReporter, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, globalShortcut, nativeImage, dialog, crashReporter, shell, nativeTheme } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const pty = require("node-pty");
@@ -65,7 +65,7 @@ function createWindow() {
     icon: icon,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 14 },
-    backgroundColor: "#faf9f8",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1917" : "#faf9f8",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: false,
@@ -121,6 +121,14 @@ function createSession(cwd) {
 
 app.whenReady().then(() => {
   log.info("App ready");
+  nativeTheme.themeSource = "system";
+  nativeTheme.on("updated", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(
+        nativeTheme.shouldUseDarkColors ? "#1c1917" : "#faf9f8"
+      );
+    }
+  });
   createWindow();
   log.info("Window created");
 
