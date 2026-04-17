@@ -28,8 +28,8 @@ let DEFAULT_DIR = null;
 let SETTINGS_FILE = null;
 let WORKSPACE_FILE = null;
 
-// Light terminal theme
-const TERM_THEME = {
+// Terminal themes -- selected based on system color scheme via prefers-color-scheme
+const TERM_THEME_LIGHT = {
   background: "#ffffff",
   foreground: "#1c1917",
   cursor: "#1c1917",
@@ -53,6 +53,44 @@ const TERM_THEME = {
   brightCyan: "#0e7490",
   brightWhite: "#f5f5f4",
 };
+
+const TERM_THEME_DARK = {
+  background: "#292524",
+  foreground: "#fafaf9",
+  cursor: "#fafaf9",
+  cursorAccent: "#292524",
+  selectionBackground: "#9a341280",
+  selectionForeground: "#fafaf9",
+  black: "#57534e",
+  red: "#f87171",
+  green: "#4ade80",
+  yellow: "#facc15",
+  blue: "#60a5fa",
+  magenta: "#c084fc",
+  cyan: "#22d3ee",
+  white: "#e7e5e4",
+  brightBlack: "#a8a29e",
+  brightRed: "#fca5a5",
+  brightGreen: "#86efac",
+  brightYellow: "#fde047",
+  brightBlue: "#93c5fd",
+  brightMagenta: "#d8b4fe",
+  brightCyan: "#67e8f9",
+  brightWhite: "#fafaf9",
+};
+
+const darkSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function getTermTheme() {
+  return darkSchemeQuery.matches ? TERM_THEME_DARK : TERM_THEME_LIGHT;
+}
+
+darkSchemeQuery.addEventListener("change", () => {
+  const next = getTermTheme();
+  Object.values(sessionMap).forEach((s) => {
+    if (s && s.term) s.term.options.theme = next;
+  });
+});
 
 // ─── DOM references ───
 
@@ -313,7 +351,7 @@ async function createTab(name) {
     cursorBlink: true,
     cursorStyle: "bar",
     cursorWidth: 1.5,
-    theme: TERM_THEME,
+    theme: getTermTheme(),
     scrollback: 10000,
     overviewRulerWidth: 0,
   });
