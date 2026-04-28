@@ -20,6 +20,15 @@ let mainWindow;
 const sessions = {};
 let nextSessionId = 1;
 
+const ASSISTANTS = {
+  claude: { command: "claude", label: "Claude" },
+  codex: { command: "codex", label: "Codex" },
+};
+
+function resolveAssistant(key) {
+  return ASSISTANTS[key] ? key : "claude";
+}
+
 // ─── Window state persistence ───
 
 const stateFile = path.join(app.getPath("userData"), "window-state.json");
@@ -84,12 +93,16 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
-function createSession(cwd) {
+function createSession(cwd, assistantKey) {
   const id = nextSessionId++;
-  log.info(`Session ${id} creating (cwd: ${cwd || "default"})`);
+  const assistant = resolveAssistant(assistantKey);
+  const assistantConfig = ASSISTANTS[assistant];
+  log.info(
+    `Session ${id} creating (${assistantConfig.label}, cwd: ${cwd || "default"})`
+  );
   const shell = process.env.SHELL || "/bin/zsh";
 
-  const ptyProcess = pty.spawn(shell, ["-l", "-c", "claude"], {
+  const ptyProcess = pty.spawn(shell, ["-l", "-c", assistantConfig.command], {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
@@ -181,8 +194,11 @@ app.whenReady().then(() => {
     return shell.showItemInFolder(filePath);
   });
 
-  ipcMain.handle("session:create", (_event, cwd) => {
-    return createSession(cwd);
+  ipcMain.handle("session:create", (_event, payload) => {
+    if (payload && typeof payload === "object") {
+      return createSession(payload.cwd, payload.assistant);
+    }
+    return createSession(payload, "claude");
   });
 
   ipcMain.on("terminal:input", (_event, { id, data }) => {

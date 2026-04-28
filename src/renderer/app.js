@@ -28,6 +28,22 @@ let DEFAULT_DIR = null;
 let SETTINGS_FILE = null;
 let WORKSPACE_FILE = null;
 
+const ASSISTANTS = {
+  claude: { label: "Claude", shortLabel: "C" },
+  codex: { label: "Codex", shortLabel: "X" },
+};
+
+let defaultAssistant = "claude";
+let isRestoringWorkspaces = false;
+
+function resolveAssistant(key) {
+  return ASSISTANTS[key] ? key : "claude";
+}
+
+function assistantLabel(key) {
+  return ASSISTANTS[resolveAssistant(key)].label;
+}
+
 // Terminal themes -- selected based on system color scheme via prefers-color-scheme
 const TERM_THEME_LIGHT = {
   background: "#ffffff",
@@ -122,7 +138,7 @@ let workspaceDragState = null;
 let workspaceClickSuppressUntil = 0;
 
 // Each workspace: { id, name, sessions: [], activeSessionIdx, fileViewerState }
-// Each session: { id, name, named, term, fitAddon, container, pendingInput, hasCapturedFirstPrompt, animateName }
+// Each session: { id, assistant, name, named, term, fitAddon, container, pendingInput, hasCapturedFirstPrompt, animateName }
 
 function generateWorkspaceId() {
   return "ws_" + nextWorkspaceId++;
@@ -136,10 +152,15 @@ function saveWorkspaceState() {
     nextWorkspaceId: nextWorkspaceId,
     sidebarCollapsed: sidebarCollapsed,
     activeWorkspaceIdx: activeWorkspaceIdx,
+    defaultAssistant: resolveAssistant(defaultAssistant),
     workspaces: workspaces.map((ws) => ({
       id: ws.id,
       name: ws.name,
       activeSessionIdx: ws.activeSessionIdx,
+      sessions: ws.sessions.map((s) => ({
+        name: s.name,
+        assistant: resolveAssistant(s.assistant),
+      })),
       sessionNames: ws.sessions.map((s) => s.name),
       fileViewerState: {
         currentPath: ws.fileViewerState.currentPath,
@@ -329,12 +350,19 @@ function activeWorkspace() {
 
 let isRenaming = false;
 
-async function createTab(name) {
+async function createTab(name, assistant) {
   const ws = activeWorkspace();
   if (!ws) return;
 
-  const id = await window.ipc.invoke("session:create", DEFAULT_DIR);
-  rendererLog("info", `Tab created: session=${id}, workspace=${ws.id}`);
+  const assistantKey = resolveAssistant(assistant || defaultAssistant);
+  const id = await window.ipc.invoke("session:create", {
+    cwd: DEFAULT_DIR,
+    assistant: assistantKey,
+  });
+  rendererLog(
+    "info",
+    `Tab created: session=${id}, assistant=${assistantKey}, workspace=${ws.id}`
+  );
   const defaultName = getDefaultSessionName(ws.sessions.length);
 
   const container = document.createElement("div");
@@ -365,6 +393,7 @@ async function createTab(name) {
 
   const session = {
     id: id,
+    assistant: assistantKey,
     name: name || defaultName,
     named: !!name && name !== defaultName,
     term: term,
@@ -392,6 +421,7 @@ async function createTab(name) {
         session.named = true;
         session.animateName = true;
         renderTabs();
+        if (!isRestoringWorkspaces) saveWorkspaceState();
       }
       session.pendingInput = "";
       return;
@@ -415,6 +445,7 @@ async function createTab(name) {
   renderTabs();
   activateTab(ws.sessions.length - 1);
   renderSidebar();
+  if (!isRestoringWorkspaces) saveWorkspaceState();
   return session;
 }
 
@@ -462,6 +493,7 @@ function closeTab(idx) {
   }
   activateTab(ws.activeSessionIdx);
   renderSidebar();
+  saveWorkspaceState();
 }
 
 function fitActiveTerminal() {
@@ -479,18 +511,47 @@ function fitActiveTerminal() {
 
 let tabDragState = null;
 let tabClickSuppressUntil = 0;
+let assistantMenuOpen = false;
+
+function closeAssistantMenu() {
+  if (!assistantMenuOpen) return;
+  assistantMenuOpen = false;
+  renderTabs();
+}
+
+function setDefaultAssistant(assistant) {
+  defaultAssistant = resolveAssistant(assistant);
+  saveWorkspaceState();
+}
+
+function chooseAssistantForNewTab(assistant) {
+  setDefaultAssistant(assistant);
+  closeAssistantMenu();
+  createTab(undefined, defaultAssistant);
+}
 
 function renderTabs() {
   const ws = activeWorkspace();
+  const existingAssistantMenu = document.querySelector(".assistant-menu");
+  if (existingAssistantMenu) existingAssistantMenu.remove();
   tabStrip.innerHTML = "";
   if (!ws) return;
 
   ws.sessions.forEach((s, i) => {
     const tab = document.createElement("button");
-    tab.className = "tab" + (i === ws.activeSessionIdx ? " active" : "");
+    const assistantKey = resolveAssistant(s.assistant);
+    tab.className =
+      "tab assistant-" +
+      assistantKey +
+      (i === ws.activeSessionIdx ? " active" : "");
     const animClass = s.animateName ? " animate-in" : "";
     if (s.animateName) s.animateName = false;
     tab.innerHTML =
+      '<span class="tab-assistant-badge" title="' +
+      assistantLabel(s.assistant) +
+      '">' +
+      ASSISTANTS[assistantKey].shortLabel +
+      "</span>" +
       '<span class="tab-label' +
       animClass +
       '">' +
@@ -532,7 +593,10 @@ function renderTabs() {
         }
         tab.style.left = (me.clientX - offsetX) + "px";
         const siblings = Array.from(tabStrip.children).filter(
-          (c) => c !== tab && c !== placeholder && !c.classList.contains("tab-add")
+          (c) =>
+            c !== tab &&
+            c !== placeholder &&
+            !c.classList.contains("assistant-picker")
         );
         let inserted = false;
         for (const sib of siblings) {
@@ -544,7 +608,7 @@ function renderTabs() {
           }
         }
         if (!inserted && siblings.length > 0) {
-          const addBtn = tabStrip.querySelector(".tab-add");
+          const addBtn = tabStrip.querySelector(".assistant-picker");
           tabStrip.insertBefore(placeholder, addBtn);
         }
       }
@@ -554,7 +618,7 @@ function renderTabs() {
         document.removeEventListener("mouseup", onUp);
         if (dragging) {
           const siblings = Array.from(tabStrip.children).filter(
-            (c) => c !== tab && !c.classList.contains("tab-add")
+            (c) => c !== tab && !c.classList.contains("assistant-picker")
           );
           const toIdx = siblings.indexOf(placeholder);
           placeholder.remove();
@@ -570,6 +634,7 @@ function renderTabs() {
             ws.sessions.splice(toIdx, 0, moved);
             ws.activeSessionIdx = ws.sessions.indexOf(activeSession);
             activateTab(ws.activeSessionIdx);
+            saveWorkspaceState();
           }
           tabClickSuppressUntil = performance.now() + 250;
           renderTabs();
@@ -594,13 +659,59 @@ function renderTabs() {
     tabStrip.appendChild(tab);
   });
 
-  const addBtn = document.createElement("button");
-  addBtn.className = "tab tab-add";
-  addBtn.title = "New session";
-  addBtn.innerHTML =
-    '<svg width="14" height="14"><use href="#icon-plus" /></svg>';
-  addBtn.addEventListener("click", () => createTab());
-  tabStrip.appendChild(addBtn);
+  const pickerWrap = document.createElement("div");
+  pickerWrap.className = "assistant-picker";
+
+  const pickerBtn = document.createElement("button");
+  pickerBtn.className = "assistant-new-tab";
+  pickerBtn.type = "button";
+  pickerBtn.title = "New AI terminal tab";
+  pickerBtn.setAttribute("aria-haspopup", "menu");
+  pickerBtn.setAttribute("aria-expanded", assistantMenuOpen ? "true" : "false");
+  pickerBtn.innerHTML =
+    '<span>' +
+    assistantLabel(defaultAssistant) +
+    "</span>" +
+    '<svg class="assistant-chevron" width="12" height="12"><use href="#icon-chevron-down" /></svg>';
+  pickerBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    assistantMenuOpen = !assistantMenuOpen;
+    renderTabs();
+  });
+  pickerWrap.appendChild(pickerBtn);
+
+  tabStrip.appendChild(pickerWrap);
+
+  if (assistantMenuOpen) {
+    const menu = document.createElement("div");
+    const buttonRect = pickerBtn.getBoundingClientRect();
+    const menuWidth = 150;
+    menu.className = "assistant-menu";
+    menu.setAttribute("role", "menu");
+    menu.style.top = buttonRect.bottom + 4 + "px";
+    menu.style.left = Math.max(8, buttonRect.right - menuWidth) + "px";
+    Object.keys(ASSISTANTS).forEach((key) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className =
+        "assistant-menu-item" +
+        (resolveAssistant(defaultAssistant) === key ? " active" : "");
+      item.setAttribute("role", "menuitem");
+      item.innerHTML =
+        '<span>' +
+        ASSISTANTS[key].label +
+        "</span>" +
+        (resolveAssistant(defaultAssistant) === key
+          ? '<svg width="14" height="14"><use href="#icon-check" /></svg>'
+          : "");
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        chooseAssistantForNewTab(key);
+      });
+      menu.appendChild(item);
+    });
+    document.body.appendChild(menu);
+  }
 }
 
 // ─── Tab rename ───
@@ -678,6 +789,7 @@ function startRenameTab(idx) {
     ws.sessions[idx].name = val;
     renderTabs();
     restoreTerminal();
+    saveWorkspaceState();
   }
 
   input.addEventListener("blur", () => setTimeout(commit, 20));
@@ -714,6 +826,16 @@ window.ipc.on("shortcut:new-tab", () => createTab());
 window.ipc.on("shortcut:close-tab", () => {
   const ws = activeWorkspace();
   if (ws && ws.sessions.length > 1) closeTab(ws.activeSessionIdx);
+});
+
+document.addEventListener("click", (event) => {
+  if (!assistantMenuOpen) return;
+  if (event.target.closest(".assistant-picker")) return;
+  closeAssistantMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeAssistantMenu();
 });
 
 // ─── Resize handle ───
@@ -1531,6 +1653,7 @@ setInterval(saveWorkspaceState, 10000);
   if (saved && saved.workspaces && saved.workspaces.length > 0) {
     nextWorkspaceId = saved.nextWorkspaceId || 1;
     sidebarCollapsed = !!saved.sidebarCollapsed;
+    defaultAssistant = resolveAssistant(saved.defaultAssistant);
     applySidebarState();
 
     // Recreate workspaces from saved state (without sessions -- those are ephemeral)
@@ -1561,23 +1684,42 @@ setInterval(saveWorkspaceState, 10000);
 
     // Recreate tabs for each workspace from saved names
     async function initWorkspaceTabs() {
-      for (let i = 0; i < workspaces.length; i++) {
-        activeWorkspaceIdx = i;
-        const wsData = saved.workspaces[i];
-        const names = wsData.sessionNames && wsData.sessionNames.length > 0
-          ? wsData.sessionNames
-          : ["Session 1"];
-        for (const name of names) {
-          const session = await createTab(name);
-          if (session) session.named = true; // don't auto-rename saved tabs
+      isRestoringWorkspaces = true;
+      try {
+        for (let i = 0; i < workspaces.length; i++) {
+          activeWorkspaceIdx = i;
+          const wsData = saved.workspaces[i];
+          const sessionData =
+            wsData.sessions && wsData.sessions.length > 0
+              ? wsData.sessions.map((session) => ({
+                  name: session.name || "Session 1",
+                  assistant: resolveAssistant(session.assistant),
+                }))
+              : (wsData.sessionNames && wsData.sessionNames.length > 0
+                  ? wsData.sessionNames
+                  : ["Session 1"]
+                ).map((name) => ({ name: name, assistant: "claude" }));
+          for (const savedSession of sessionData) {
+            const session = await createTab(
+              savedSession.name,
+              savedSession.assistant
+            );
+            if (session) session.named = true; // don't auto-rename saved tabs
+          }
+          // Restore active tab index
+          if (
+            wsData.activeSessionIdx >= 0 &&
+            wsData.activeSessionIdx < sessionData.length
+          ) {
+            workspaces[i].activeSessionIdx = wsData.activeSessionIdx;
+          }
         }
-        // Restore active tab index
-        if (wsData.activeSessionIdx >= 0 && wsData.activeSessionIdx < names.length) {
-          workspaces[i].activeSessionIdx = wsData.activeSessionIdx;
-        }
+      } finally {
+        isRestoringWorkspaces = false;
       }
       // Switch to the saved active workspace
       switchWorkspace(targetIdx);
+      saveWorkspaceState();
     }
     initWorkspaceTabs();
   } else {

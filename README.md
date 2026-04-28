@@ -1,10 +1,10 @@
 # Producer
 
-A lightweight PM workspace that pairs Claude Code with a file viewer and markdown previewer.
+A lightweight PM workspace that pairs Claude Code or Codex with a file viewer and markdown previewer.
 
 ## Features
 
-- **Claude Code terminal** with tabbed sessions
+- **Claude Code/Codex terminal** with tabbed sessions
 - **File viewer** with markdown rendering, docx support, and inline editing
 - **Workspaces** to organize multiple projects with their own tabs and file state
 - **Drag-to-reorder** workspaces and tabs
@@ -17,6 +17,7 @@ A lightweight PM workspace that pairs Claude Code with a file viewer and markdow
 - macOS (Apple Silicon or Intel)
 - [Node.js](https://nodejs.org) v18+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- Codex CLI installed and authenticated if you want to launch Codex tabs
 
 ## Install
 
