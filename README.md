@@ -1,6 +1,6 @@
 # Producer
 
-A lightweight PM workspace that pairs Claude Code with a file viewer and markdown previewer. Inspired by [Conductor.build](https://conductor.build).
+A lightweight PM workspace that pairs Claude Code with a file viewer and markdown previewer.
 
 ## Features
 
