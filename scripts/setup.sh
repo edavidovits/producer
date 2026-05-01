@@ -11,8 +11,8 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -q "Producer Dev"
   echo "[ok] Signing certificate 'Producer Dev' already exists"
 else
   echo "[...] Creating self-signed certificate 'Producer Dev'..."
-  TMPDIR=$(mktemp -d)
-  cat > "$TMPDIR/cert.conf" << 'CERTEOF'
+  CERT_TMP=$(mktemp -d)
+  cat > "$CERT_TMP/cert.conf" << 'CERTEOF'
 [req]
 distinguished_name = req_dn
 x509_extensions = v3_req
@@ -24,20 +24,33 @@ keyUsage = digitalSignature
 extendedKeyUsage = codeSigning
 CERTEOF
 
-  openssl req -x509 -newkey rsa:2048 \
-    -keyout "$TMPDIR/key.pem" -out "$TMPDIR/cert.pem" \
-    -days 3650 -nodes -config "$TMPDIR/cert.conf" 2>/dev/null
+  # Prefer Homebrew's OpenSSL 3 (needs -legacy for keychain-compatible pkcs12);
+  # fall back to system openssl (LibreSSL already emits the legacy format).
+  if [ -x /opt/homebrew/opt/openssl@3/bin/openssl ]; then
+    OPENSSL=/opt/homebrew/opt/openssl@3/bin/openssl
+    LEGACY_FLAG=-legacy
+  elif [ -x /usr/local/opt/openssl@3/bin/openssl ]; then
+    OPENSSL=/usr/local/opt/openssl@3/bin/openssl
+    LEGACY_FLAG=-legacy
+  else
+    OPENSSL=openssl
+    LEGACY_FLAG=
+  fi
 
-  openssl pkcs12 -export \
-    -out "$TMPDIR/producer.p12" \
-    -inkey "$TMPDIR/key.pem" -in "$TMPDIR/cert.pem" \
-    -passout pass:producer -legacy 2>/dev/null
+  "$OPENSSL" req -x509 -newkey rsa:2048 \
+    -keyout "$CERT_TMP/key.pem" -out "$CERT_TMP/cert.pem" \
+    -days 3650 -nodes -config "$CERT_TMP/cert.conf" 2>/dev/null
 
-  security import "$TMPDIR/producer.p12" \
+  "$OPENSSL" pkcs12 -export \
+    -out "$CERT_TMP/producer.p12" \
+    -inkey "$CERT_TMP/key.pem" -in "$CERT_TMP/cert.pem" \
+    -passout pass:producer $LEGACY_FLAG 2>/dev/null
+
+  security import "$CERT_TMP/producer.p12" \
     -k ~/Library/Keychains/login.keychain-db \
     -P producer -T /usr/bin/codesign
 
-  rm -rf "$TMPDIR"
+  rm -rf "$CERT_TMP"
   echo "[ok] Certificate created and imported"
 fi
 
