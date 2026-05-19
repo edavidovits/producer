@@ -146,7 +146,36 @@ app.whenReady().then(() => {
   log.info("Window created");
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    log.error(`Render process gone: reason=${details.reason}, exitCode=${details.exitCode}`);
+    const aliveCount = Object.values(sessions).filter((s) => s.alive).length;
+    const sessionIds = Object.keys(sessions).join(",") || "none";
+
+    let dumpName = "(lookup failed)";
+    try {
+      const dumpDir = path.join(app.getPath("userData"), "Crashpad", "pending");
+      const files = fs.readdirSync(dumpDir).filter((f) => f.endsWith(".dmp"));
+      if (files.length === 0) {
+        dumpName = "(none in pending/)";
+      } else {
+        dumpName = files
+          .map((f) => ({ f, mtime: fs.statSync(path.join(dumpDir, f)).mtimeMs }))
+          .sort((a, b) => b.mtime - a.mtime)[0].f;
+      }
+    } catch (e) {
+      dumpName = `(error: ${e.message})`;
+    }
+
+    const breadcrumbs = log.recent();
+    const trail = breadcrumbs
+      .map((r) => `    [${r.ts}] [${r.level}] ${r.msg}`)
+      .join("\n");
+
+    log.error(
+      `Render process gone: reason=${details.reason}, exitCode=${details.exitCode}\n` +
+      `  active sessions: ${aliveCount} (ids: ${sessionIds})\n` +
+      `  crashpad dump: ${dumpName}\n` +
+      `  breadcrumbs (last ${breadcrumbs.length}):\n` +
+      trail
+    );
   });
 
   ipcMain.on("log:renderer", (_event, { level, msg }) => {

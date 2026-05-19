@@ -19,9 +19,14 @@ try {
   }
 } catch {}
 
+const recent = [];
+const RECENT_MAX = 40;
+
 function write(level, msg) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${level}] ${msg}\n`;
+  recent.push({ ts, level, msg });
+  if (recent.length > RECENT_MAX) recent.shift();
   try {
     fs.appendFileSync(logFile, line);
   } catch {}
@@ -31,6 +36,7 @@ const log = {
   info: (msg) => write("INFO", msg),
   warn: (msg) => write("WARN", msg),
   error: (msg) => write("ERROR", msg),
+  recent: () => recent.slice(),
 };
 
 module.exports = log;
