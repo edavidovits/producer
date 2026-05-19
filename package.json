@@ -1,7 +1,7 @@
 {
   "name": "producer",
   "productName": "Producer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "PM workspace: Claude Code/Codex + file viewer",
   "main": "src/main/main.js",
   "scripts": {
