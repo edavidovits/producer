@@ -16,6 +16,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 const fs = require("fs");
 const path = require("path");
+const chokidar = require("chokidar");
 const { Terminal } = require("@xterm/xterm");
 const { FitAddon } = require("@xterm/addon-fit");
 const { WebLinksAddon } = require("@xterm/addon-web-links");
@@ -1137,10 +1138,17 @@ function showDirectory(dirPath) {
   applySlide();
   updateNavButtons();
 
-  // Watch directory for changes (new/deleted files)
+  // Watch directory for changes (new/deleted files). Using chokidar+fsevents
+  // because fs.watch on macOS over Dropbox-synced paths crashes the renderer
+  // in node::InternalCallbackScope::Close on stale FSEvents callbacks.
   try {
     let dirWatchTimeout = null;
-    const dirWatcher = fs.watch(dirPath, () => {
+    const dirWatcher = chokidar.watch(dirPath, {
+      ignoreInitial: true,
+      depth: 0,
+      persistent: true,
+    });
+    dirWatcher.on("all", () => {
       clearTimeout(dirWatchTimeout);
       dirWatchTimeout = setTimeout(() => {
         const currentWs = activeWorkspace();
@@ -1150,8 +1158,14 @@ function showDirectory(dirPath) {
         }
       }, 300);
     });
-    unwatchCurrent = () => dirWatcher.close();
-  } catch {}
+    dirWatcher.on("error", (e) => rendererLog("warn", `dir watcher error ${dirPath}: ${e.message || e}`));
+    unwatchCurrent = () => {
+      clearTimeout(dirWatchTimeout);
+      void dirWatcher.close();
+    };
+  } catch (e) {
+    rendererLog("warn", `Failed to watch dir ${dirPath}: ${e.message}`);
+  }
 }
 
 function showFile(filePath) {
@@ -1172,7 +1186,11 @@ function showFile(filePath) {
     renderMarkdown(content);
     try {
       let watchDebounce = null;
-      const watcher = fs.watch(filePath, () => {
+      const watcher = chokidar.watch(filePath, {
+        ignoreInitial: true,
+        persistent: true,
+      });
+      watcher.on("change", () => {
         if (watchDebounce) clearTimeout(watchDebounce);
         watchDebounce = setTimeout(() => {
           const updated = readFileContent(filePath);
@@ -1181,7 +1199,11 @@ function showFile(filePath) {
             renderMarkdown(updated);
         }, 100);
       });
-      unwatchCurrent = () => { if (watchDebounce) clearTimeout(watchDebounce); watcher.close(); };
+      watcher.on("error", (e) => rendererLog("warn", `file watcher error ${filePath}: ${e.message || e}`));
+      unwatchCurrent = () => {
+        if (watchDebounce) clearTimeout(watchDebounce);
+        void watcher.close();
+      };
     } catch (e) {
       rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
     }
