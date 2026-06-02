@@ -1,13 +1,13 @@
 {
   "name": "producer",
   "productName": "Producer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "PM workspace: Claude Code/Codex + file viewer",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder --mac --dir && cp -r dist/mac-arm64/Producer.app /Applications/",
+    "build": "electron-builder --mac --dir && rm -rf /Applications/Producer.app && ditto dist/mac-arm64/Producer.app /Applications/Producer.app",
     "dist": "electron-builder --mac",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty"
