@@ -6,6 +6,13 @@ const log = require("./logger");
 
 crashReporter.start({ submitURL: "", uploadToServer: false });
 
+// Renderer was crashing with EXC_BAD_ACCESS (null deref) inside Chromium's
+// GPU-side font/text rasterizer during heavy workspace-switch re-layouts
+// (confirmed via Crashpad minidump: main-thread fault with CoreText glyph
+// measurement active). Forcing software rasterization avoids that code path.
+// Must be called before app "ready".
+app.disableHardwareAcceleration();
+
 process.on("uncaughtException", (err) => {
   log.error(`Uncaught exception: ${err.stack || err}`);
 });
