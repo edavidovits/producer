@@ -16,6 +16,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 const fs = require("fs");
 const path = require("path");
+const chokidar = require("chokidar");
 const { Terminal } = require("@xterm/xterm");
 const { FitAddon } = require("@xterm/addon-fit");
 const { WebLinksAddon } = require("@xterm/addon-web-links");
@@ -110,10 +111,10 @@ darkSchemeQuery.addEventListener("change", () => {
 
 // ─── DOM references ───
 
-const tabStrip = document.getElementById("tab-strip");
 const terminalBody = document.getElementById("terminal-body");
 const sidebar = document.getElementById("sidebar");
 const workspaceList = document.getElementById("workspace-list");
+const sidebarFooter = document.getElementById("sidebar-footer");
 const btnNewWorkspace = document.getElementById("btn-new-workspace");
 const sidebarToggleOpen = document.getElementById("sidebar-toggle-open");
 const sidebarToggleClosed = document.getElementById("sidebar-toggle-closed");
@@ -156,6 +157,7 @@ function saveWorkspaceState() {
     workspaces: workspaces.map((ws) => ({
       id: ws.id,
       name: ws.name,
+      collapsed: !!ws.collapsed,
       activeSessionIdx: ws.activeSessionIdx,
       sessions: ws.sessions.map((s) => ({
         name: s.name,
@@ -209,8 +211,11 @@ function iconSvg(id, size) {
 
 function truncateTabName(text) {
   const trimmed = text.trim().replace(/\s+/g, " ");
-  if (trimmed.length <= 20) return trimmed;
-  return trimmed.slice(0, 18).trimEnd() + "...";
+  // Keep a generous cap; the sidebar tab label is flex with a CSS ellipsis, so
+  // anything that doesn't fit is trimmed visually (and the hover actions sit on
+  // an overlay, so they don't eat into the resting name width).
+  if (trimmed.length <= 60) return trimmed;
+  return trimmed.slice(0, 58).trimEnd() + "...";
 }
 
 function getDefaultSessionName(idx) {
@@ -279,7 +284,13 @@ function attachWorkspaceDrag(row, idx) {
   row.addEventListener("pointerdown", (event) => {
     if (workspaceDragState) return;
     if (event.button !== 0) return;
+    // The drag is wired on the whole .ws-group, but only the header row may
+    // initiate it — not the chevron, action buttons, rename input, or the tab
+    // list below.
     if (
+      !event.target.closest(".ws-row") ||
+      event.target.closest(".ws-tabs") ||
+      event.target.closest(".ws-add") ||
       event.target.closest(".ws-action") ||
       event.target.closest(".ws-rename-input")
     ) {
@@ -350,8 +361,68 @@ function activeWorkspace() {
 
 let isRenaming = false;
 
-async function createTab(name, assistant) {
-  const ws = activeWorkspace();
+// ─── Terminal mount lifecycle ───
+//
+// The renderer used to keep every terminal in every workspace opened and
+// mounted in the DOM at once. Switching workspaces just flipped display:none,
+// which forced a synchronous re-layout + CoreText glyph measurement across all
+// of them at once and segfaulted the renderer (EXC_BAD_ACCESS in the text
+// layout path). Now:
+//   - only the ACTIVE workspace's containers are attached to the DOM; inactive
+//     (and collapsed) workspaces are fully detached, so they cost nothing.
+//   - a terminal is term.open()'d lazily, only once it is actually visible with
+//     real dimensions, never on a zero-size/hidden element.
+//   - all fit() calls go through safeFit(), which refuses to measure unless the
+//     container is connected, visible, and non-zero.
+// xterm buffers term.write() while detached/unopened, so no output is lost.
+
+function openSession(s) {
+  if (s.opened) return;
+  s.term.open(s.container);
+  s.term.loadAddon(new WebLinksAddon());
+  s.term.attachCustomKeyEventHandler(() => !isRenaming);
+  s.opened = true;
+}
+
+function mountSession(s) {
+  if (s.container.parentNode !== terminalBody) terminalBody.appendChild(s.container);
+}
+
+function unmountSession(s) {
+  if (s.container.parentNode) s.container.remove();
+}
+
+function mountWorkspace(ws) {
+  if (!ws) return;
+  ws.sessions.forEach(mountSession);
+}
+
+function unmountWorkspace(ws) {
+  if (!ws) return;
+  ws.sessions.forEach(unmountSession);
+}
+
+// Fit a terminal ONLY when its container is genuinely laid out. Measuring text
+// on a zero-size or display:none element is what crashed the renderer.
+function safeFit(s) {
+  if (!s || !s.opened) return;
+  const c = s.container;
+  if (!c || !c.isConnected || c.offsetParent === null) return;
+  if (c.clientWidth < 2 || c.clientHeight < 2) return;
+  try {
+    s.fitAddon.fit();
+    window.ipc.send("terminal:resize", {
+      id: s.id,
+      cols: s.term.cols,
+      rows: s.term.rows,
+    });
+  } catch (e) {
+    rendererLog("warn", `fit skipped: ${e && e.message ? e.message : e}`);
+  }
+}
+
+async function createTab(name, assistant, targetWs) {
+  const ws = targetWs || activeWorkspace();
   if (!ws) return;
 
   const assistantKey = resolveAssistant(assistant || defaultAssistant);
@@ -369,7 +440,8 @@ async function createTab(name, assistant) {
   container.className = "terminal-session";
   container.dataset.sessionId = id;
   container.dataset.workspaceId = ws.id;
-  terminalBody.appendChild(container);
+  // NOTE: not appended to the DOM here. It is mounted lazily only when its
+  // workspace becomes active (see mountWorkspace / activateTab).
 
   const term = new Terminal({
     fontFamily: '"Geist Mono", "SF Mono", Menlo, Monaco, monospace',
@@ -386,10 +458,8 @@ async function createTab(name, assistant) {
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
-  term.loadAddon(new WebLinksAddon());
-  term.open(container);
-
-  term.attachCustomKeyEventHandler(() => !isRenaming);
+  // WebLinksAddon + term.open() are deferred to openSession(), which only runs
+  // once the container is actually visible.
 
   const session = {
     id: id,
@@ -399,6 +469,7 @@ async function createTab(name, assistant) {
     term: term,
     fitAddon: fitAddon,
     container: container,
+    opened: false,
     pendingInput: "",
     hasCapturedFirstPrompt: false,
     animateName: false,
@@ -442,8 +513,13 @@ async function createTab(name, assistant) {
   ws.sessions.push(session);
   sessionMap[id] = session;
 
-  renderTabs();
-  activateTab(ws.sessions.length - 1);
+  // Only mount + reveal when this tab belongs to the workspace on screen.
+  // During restore, background workspaces register their sessions but stay
+  // detached and unopened until the user switches to them.
+  if (ws === activeWorkspace()) {
+    mountSession(session);
+    activateTab(ws.sessions.length - 1);
+  }
   renderSidebar();
   if (!isRestoringWorkspaces) saveWorkspaceState();
   return session;
@@ -455,21 +531,23 @@ function activateTab(idx) {
   if (idx < 0 || idx >= ws.sessions.length) return;
   ws.activeSessionIdx = idx;
 
-  // Show/hide terminal containers for this workspace
+  // Make sure this workspace's containers are attached, then show only the
+  // active tab. Inactive tabs stay mounted-but-display:none (cheap) so their
+  // scrollback survives; the active one becomes visible.
   ws.sessions.forEach((s, i) => {
+    mountSession(s);
     s.container.classList.toggle("active", i === idx);
   });
 
-  renderTabs();
+  renderSidebar();
 
   requestAnimationFrame(() => {
     const s = ws.sessions[idx];
-    s.fitAddon.fit();
-    window.ipc.send("terminal:resize", {
-      id: s.id,
-      cols: s.term.cols,
-      rows: s.term.rows,
-    });
+    if (!s) return;
+    // Open the terminal only now that its container is visible with real
+    // dimensions — opening on a zero-size element is the crash path.
+    openSession(s);
+    safeFit(s);
     if (!isRenaming) s.term.focus();
   });
 }
@@ -496,27 +574,59 @@ function closeTab(idx) {
   saveWorkspaceState();
 }
 
+// Move a session out of its current workspace and into another. The terminal
+// (and its pty in the main process) stays alive; we just detach the container
+// from the DOM and re-parent the session object to the target workspace.
+function moveSessionToWorkspace(fromWs, fromIdx, toWsIdx) {
+  const toWs = workspaces[toWsIdx];
+  if (!toWs || toWs === fromWs) return;
+  const moved = fromWs.sessions[fromIdx];
+  if (!moved) return;
+
+  const prevActiveId =
+    fromWs.sessions[fromWs.activeSessionIdx] &&
+    fromWs.sessions[fromWs.activeSessionIdx].id;
+
+  fromWs.sessions.splice(fromIdx, 1);
+  unmountSession(moved);
+  moved.container.classList.remove("active");
+  moved.container.dataset.workspaceId = toWs.id;
+  toWs.sessions.push(moved);
+  toWs.activeSessionIdx = toWs.sessions.length - 1;
+
+  // Keep the source workspace pointing at whatever tab was active (or clamp).
+  const stillActiveIdx = fromWs.sessions.findIndex((s) => s.id === prevActiveId);
+  fromWs.activeSessionIdx =
+    stillActiveIdx !== -1
+      ? stillActiveIdx
+      : Math.min(fromIdx, fromWs.sessions.length - 1);
+
+  rendererLog("info", `Tab moved: session=${moved.id} -> workspace=${toWs.id}`);
+
+  if (fromWs === activeWorkspace() && fromWs.sessions.length > 0) {
+    activateTab(fromWs.activeSessionIdx);
+  }
+  renderSidebar();
+  saveWorkspaceState();
+}
+
 function fitActiveTerminal() {
   const ws = activeWorkspace();
   if (!ws || ws.activeSessionIdx < 0 || ws.activeSessionIdx >= ws.sessions.length)
     return;
   const s = ws.sessions[ws.activeSessionIdx];
-  s.fitAddon.fit();
-  window.ipc.send("terminal:resize", {
-    id: s.id,
-    cols: s.term.cols,
-    rows: s.term.rows,
-  });
+  safeFit(s);
 }
 
 let tabDragState = null;
 let tabClickSuppressUntil = 0;
 let assistantMenuOpen = false;
+let assistantMenuWsIdx = -1;
 
 function closeAssistantMenu() {
   if (!assistantMenuOpen) return;
   assistantMenuOpen = false;
-  renderTabs();
+  renderAssistantFooter();
 }
 
 function setDefaultAssistant(assistant) {
@@ -530,134 +640,195 @@ function chooseAssistantForNewTab(assistant) {
   createTab(undefined, defaultAssistant);
 }
 
+// Tabs now live in the sidebar under their workspace. renderTabs() is kept as
+// an alias so existing callers (rename capture, drag, menu toggle) still work.
 function renderTabs() {
-  const ws = activeWorkspace();
-  const existingAssistantMenu = document.querySelector(".assistant-menu");
-  if (existingAssistantMenu) existingAssistantMenu.remove();
-  tabStrip.innerHTML = "";
-  if (!ws) return;
+  renderSidebar();
+}
 
-  ws.sessions.forEach((s, i) => {
-    const tab = document.createElement("button");
-    const assistantKey = resolveAssistant(s.assistant);
-    tab.className =
-      "tab assistant-" +
-      assistantKey +
-      (i === ws.activeSessionIdx ? " active" : "");
-    const animClass = s.animateName ? " animate-in" : "";
-    if (s.animateName) s.animateName = false;
-    tab.innerHTML =
-      '<span class="tab-assistant-badge" title="' +
-      assistantLabel(s.assistant) +
-      '">' +
-      ASSISTANTS[assistantKey].shortLabel +
-      "</span>" +
-      '<span class="tab-label' +
-      animClass +
-      '">' +
-      escapeHtml(s.name) +
-      "</span>" +
-      '<span class="tab-actions">' +
-      '<span class="tab-action tab-rename" title="Rename"><svg width="12" height="12"><use href="#icon-pencil" /></svg></span>' +
-      '<span class="tab-action tab-close" title="Close"><svg width="10" height="10"><use href="#icon-close" /></svg></span>' +
-      "</span>";
+// Build one tab row for the workspace tree. `wsIdx` is the workspace's index;
+// `i` is the session index within that workspace.
+function buildTabRow(ws, wsIdx, s, i) {
+  const tab = document.createElement("button");
+  const assistantKey = resolveAssistant(s.assistant);
+  const isActiveWs = wsIdx === activeWorkspaceIdx;
+  tab.className =
+    "tab assistant-" +
+    assistantKey +
+    (isActiveWs && i === ws.activeSessionIdx ? " active" : "");
+  tab.dataset.sessionId = s.id;
+  const animClass = s.animateName ? " animate-in" : "";
+  if (s.animateName) s.animateName = false;
+  tab.innerHTML =
+    '<span class="tab-assistant-badge" title="' +
+    assistantLabel(s.assistant) +
+    '">' +
+    ASSISTANTS[assistantKey].shortLabel +
+    "</span>" +
+    '<span class="tab-label' +
+    animClass +
+    '">' +
+    escapeHtml(s.name) +
+    "</span>" +
+    '<span class="tab-actions">' +
+    '<span class="tab-action tab-rename" title="Rename"><svg width="12" height="12"><use href="#icon-pencil" /></svg></span>' +
+    '<span class="tab-action tab-close" title="Close"><svg width="10" height="10"><use href="#icon-close" /></svg></span>' +
+    "</span>";
 
-    // Drag to reorder tabs (mousedown, no pointer capture)
-    tab.addEventListener("mousedown", (event) => {
-      if (event.button !== 0) return;
-      if (event.target.closest(".tab-action")) return;
+  // Drag a tab to reorder it within the active workspace, OR drop it onto
+  // another workspace's row to move it into that workspace.
+  tab.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest(".tab-action")) return;
+    if (wsIdx !== activeWorkspaceIdx) return; // only the active ws shows tabs
+    const list = tab.parentNode;
+    if (!list) return;
 
-      const startX = event.clientX;
-      const fromIdx = i;
-      let dragging = false;
-      let placeholder = null;
-      let offsetX = 0;
+    const startY = event.clientY;
+    const fromIdx = i;
+    let dragging = false;
+    let placeholder = null;
+    let offsetY = 0;
+    let dropWsIdx = -1; // foreign workspace under the cursor, or -1
+    let dropRow = null; // its .ws-row element (highlighted)
 
-      function onMove(me) {
-        if (!dragging && Math.abs(me.clientX - startX) < 6) return;
-        if (!dragging) {
-          dragging = true;
-          const rect = tab.getBoundingClientRect();
-          offsetX = me.clientX - rect.left;
-          placeholder = document.createElement("div");
-          placeholder.className = "tab tab-placeholder";
-          placeholder.style.height = "100%";
-          placeholder.style.width = rect.width + "px";
-          tabStrip.insertBefore(placeholder, tab);
-          tab.classList.add("tab-dragging");
-          tab.style.width = rect.width + "px";
-          tab.style.position = "fixed";
-          tab.style.zIndex = "1000";
-          tab.style.top = rect.top + "px";
-          tab.style.left = rect.left + "px";
+    function clearDropTarget() {
+      if (dropRow) dropRow.classList.remove("ws-drop-target");
+      dropRow = null;
+      dropWsIdx = -1;
+    }
+
+    // Which workspace row (other than the active one) is under the pointer?
+    function foreignRowAt(x, y) {
+      const el = document.elementFromPoint(x, y);
+      const row = el && el.closest(".ws-row");
+      if (!row) return null;
+      const group = row.closest(".ws-group");
+      const idx = Array.from(workspaceList.children).indexOf(group);
+      if (idx === -1 || idx === activeWorkspaceIdx) return null;
+      return { idx, row };
+    }
+
+    function onMove(me) {
+      if (!dragging && Math.abs(me.clientY - startY) < 6) return;
+      if (!dragging) {
+        dragging = true;
+        const rect = tab.getBoundingClientRect();
+        offsetY = me.clientY - rect.top;
+        placeholder = document.createElement("div");
+        placeholder.className = "tab tab-placeholder";
+        placeholder.style.height = rect.height + "px";
+        placeholder.style.width = rect.width + "px";
+        list.insertBefore(placeholder, tab);
+        tab.classList.add("tab-dragging");
+        tab.style.width = rect.width + "px";
+        tab.style.position = "fixed";
+        tab.style.zIndex = "1000";
+        tab.style.left = rect.left + "px";
+        tab.style.top = rect.top + "px";
+        // Let elementFromPoint see what's beneath the floating tab.
+        tab.style.pointerEvents = "none";
+      }
+      tab.style.top = (me.clientY - offsetY) + "px";
+
+      const foreign = foreignRowAt(me.clientX, me.clientY);
+      if (foreign) {
+        // Hovering another workspace: highlight it, suspend in-list reordering.
+        if (dropRow !== foreign.row) {
+          clearDropTarget();
+          dropRow = foreign.row;
+          dropWsIdx = foreign.idx;
+          dropRow.classList.add("ws-drop-target");
         }
-        tab.style.left = (me.clientX - offsetX) + "px";
-        const siblings = Array.from(tabStrip.children).filter(
-          (c) =>
-            c !== tab &&
-            c !== placeholder &&
-            !c.classList.contains("assistant-picker")
-        );
-        let inserted = false;
-        for (const sib of siblings) {
-          const sr = sib.getBoundingClientRect();
-          if (me.clientX < sr.left + sr.width / 2) {
-            tabStrip.insertBefore(placeholder, sib);
-            inserted = true;
-            break;
-          }
-        }
-        if (!inserted && siblings.length > 0) {
-          const addBtn = tabStrip.querySelector(".assistant-picker");
-          tabStrip.insertBefore(placeholder, addBtn);
+        if (placeholder.parentNode) placeholder.remove();
+        return;
+      }
+      clearDropTarget();
+      if (!placeholder.parentNode) list.appendChild(placeholder);
+
+      const siblings = Array.from(list.children).filter(
+        (c) => c !== tab && c !== placeholder
+      );
+      let inserted = false;
+      for (const sib of siblings) {
+        const sr = sib.getBoundingClientRect();
+        if (me.clientY < sr.top + sr.height / 2) {
+          list.insertBefore(placeholder, sib);
+          inserted = true;
+          break;
         }
       }
+      if (!inserted) list.appendChild(placeholder);
+    }
 
-      function onUp() {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        if (dragging) {
-          const siblings = Array.from(tabStrip.children).filter(
-            (c) => c !== tab && !c.classList.contains("assistant-picker")
-          );
-          const toIdx = siblings.indexOf(placeholder);
-          placeholder.remove();
-          tab.classList.remove("tab-dragging");
-          tab.style.position = "";
-          tab.style.zIndex = "";
-          tab.style.top = "";
-          tab.style.left = "";
-          tab.style.width = "";
-          if (toIdx !== -1 && toIdx !== fromIdx) {
-            const activeSession = ws.sessions[ws.activeSessionIdx];
-            const moved = ws.sessions.splice(fromIdx, 1)[0];
-            ws.sessions.splice(toIdx, 0, moved);
-            ws.activeSessionIdx = ws.sessions.indexOf(activeSession);
-            activateTab(ws.activeSessionIdx);
-            saveWorkspaceState();
-          }
-          tabClickSuppressUntil = performance.now() + 250;
-          renderTabs();
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (dragging) {
+        const targetWsIdx = dropWsIdx;
+        const reorderToIdx = placeholder
+          ? Array.from(list.children)
+              .filter((c) => c !== tab)
+              .indexOf(placeholder)
+          : -1;
+        if (placeholder && placeholder.parentNode) placeholder.remove();
+        clearDropTarget();
+        tab.classList.remove("tab-dragging");
+        tab.style.position = "";
+        tab.style.zIndex = "";
+        tab.style.top = "";
+        tab.style.left = "";
+        tab.style.width = "";
+        tab.style.pointerEvents = "";
+        tabClickSuppressUntil = performance.now() + 250;
+
+        if (targetWsIdx !== -1) {
+          moveSessionToWorkspace(ws, fromIdx, targetWsIdx);
+          return;
         }
+        if (reorderToIdx !== -1 && reorderToIdx !== fromIdx) {
+          const activeSession = ws.sessions[ws.activeSessionIdx];
+          const moved = ws.sessions.splice(fromIdx, 1)[0];
+          ws.sessions.splice(reorderToIdx, 0, moved);
+          ws.activeSessionIdx = ws.sessions.indexOf(activeSession);
+          activateTab(ws.activeSessionIdx);
+          saveWorkspaceState();
+        }
+        renderSidebar();
       }
+    }
 
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-    });
-
-    tab.addEventListener("click", (e) => {
-      if (tabClickSuppressUntil && performance.now() < tabClickSuppressUntil) return;
-      if (e.target.closest(".tab-close")) {
-        closeTab(i);
-      } else if (e.target.closest(".tab-rename")) {
-        startRenameTab(i);
-      } else {
-        activateTab(i);
-      }
-    });
-
-    tabStrip.appendChild(tab);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   });
+
+  tab.addEventListener("click", (e) => {
+    if (tabClickSuppressUntil && performance.now() < tabClickSuppressUntil) return;
+    // Clicking a tab in another workspace switches to it first.
+    if (wsIdx !== activeWorkspaceIdx) {
+      if (e.target.closest(".tab-action")) return;
+      ws.activeSessionIdx = i;
+      switchWorkspace(wsIdx);
+      return;
+    }
+    if (e.target.closest(".tab-close")) {
+      closeTab(i);
+    } else if (e.target.closest(".tab-rename")) {
+      startRenameTab(i);
+    } else {
+      activateTab(i);
+    }
+  });
+
+  return tab;
+}
+
+// The single assistant selector pinned to the bottom of the sidebar. Picking an
+// assistant here sets the default used by every workspace's "+" button; it does
+// not create a tab on its own. The menu opens upward since it sits at the floor.
+function renderAssistantFooter() {
+  if (!sidebarFooter) return;
+  sidebarFooter.innerHTML = "";
 
   const pickerWrap = document.createElement("div");
   pickerWrap.className = "assistant-picker";
@@ -665,31 +836,33 @@ function renderTabs() {
   const pickerBtn = document.createElement("button");
   pickerBtn.className = "assistant-new-tab";
   pickerBtn.type = "button";
-  pickerBtn.title = "New AI terminal tab";
+  pickerBtn.title = "Default assistant for new tabs";
   pickerBtn.setAttribute("aria-haspopup", "menu");
   pickerBtn.setAttribute("aria-expanded", assistantMenuOpen ? "true" : "false");
   pickerBtn.innerHTML =
-    '<span>' +
+    '<span class="assistant-dot assistant-' +
+    resolveAssistant(defaultAssistant) +
+    '"></span>' +
+    "<span>" +
     assistantLabel(defaultAssistant) +
     "</span>" +
     '<svg class="assistant-chevron" width="12" height="12"><use href="#icon-chevron-down" /></svg>';
   pickerBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     assistantMenuOpen = !assistantMenuOpen;
-    renderTabs();
+    renderAssistantFooter();
   });
   pickerWrap.appendChild(pickerBtn);
-
-  tabStrip.appendChild(pickerWrap);
 
   if (assistantMenuOpen) {
     const menu = document.createElement("div");
     const buttonRect = pickerBtn.getBoundingClientRect();
-    const menuWidth = 150;
     menu.className = "assistant-menu";
     menu.setAttribute("role", "menu");
-    menu.style.top = buttonRect.bottom + 4 + "px";
-    menu.style.left = Math.max(8, buttonRect.right - menuWidth) + "px";
+    // Anchor above the button (footer sits at the bottom of the window).
+    menu.style.bottom = window.innerHeight - buttonRect.top + 4 + "px";
+    menu.style.left = Math.max(8, buttonRect.left) + "px";
+    menu.style.minWidth = buttonRect.width + "px";
     Object.keys(ASSISTANTS).forEach((key) => {
       const item = document.createElement("button");
       item.type = "button";
@@ -698,7 +871,7 @@ function renderTabs() {
         (resolveAssistant(defaultAssistant) === key ? " active" : "");
       item.setAttribute("role", "menuitem");
       item.innerHTML =
-        '<span>' +
+        "<span>" +
         ASSISTANTS[key].label +
         "</span>" +
         (resolveAssistant(defaultAssistant) === key
@@ -706,12 +879,23 @@ function renderTabs() {
           : "");
       item.addEventListener("click", (event) => {
         event.stopPropagation();
-        chooseAssistantForNewTab(key);
+        setDefaultAssistant(key);
+        assistantMenuOpen = false;
+        renderAssistantFooter();
       });
       menu.appendChild(item);
     });
     document.body.appendChild(menu);
   }
+
+  sidebarFooter.appendChild(pickerWrap);
+}
+
+// Create a tab in a specific workspace, switching to it first if needed.
+function createTabInWorkspace(wsIdx, assistant) {
+  setDefaultAssistant(assistant);
+  if (wsIdx !== activeWorkspaceIdx) switchWorkspace(wsIdx);
+  createTab(undefined, defaultAssistant);
 }
 
 // ─── Tab rename ───
@@ -719,10 +903,15 @@ function renderTabs() {
 function startRenameTab(idx) {
   const ws = activeWorkspace();
   if (!ws) return;
-  const tab = tabStrip.children[idx];
+  const session = ws.sessions[idx];
+  if (!session) return;
+  const tab = workspaceList.querySelector(
+    '.tab[data-session-id="' + session.id + '"]'
+  );
   if (!tab) return;
+  const host = tab.parentNode; // the .ws-tabs list this tab lives in
   const label = tab.querySelector(".tab-label");
-  const current = ws.sessions[idx].name;
+  const current = session.name;
   const activeTerm =
     ws.activeSessionIdx >= 0 ? ws.sessions[ws.activeSessionIdx].term : null;
   isRenaming = true;
@@ -740,15 +929,15 @@ function startRenameTab(idx) {
   input.style.position = "absolute";
   input.style.zIndex = "10";
 
-  const stripPosition = getComputedStyle(tabStrip).position;
-  if (stripPosition === "static") {
-    tabStrip.style.position = "relative";
+  const hostPosition = getComputedStyle(host).position;
+  if (hostPosition === "static") {
+    host.style.position = "relative";
   }
 
   const labelRect = label.getBoundingClientRect();
-  const stripRect = tabStrip.getBoundingClientRect();
-  input.style.left = labelRect.left - stripRect.left + "px";
-  input.style.top = labelRect.top - stripRect.top + "px";
+  const hostRect = host.getBoundingClientRect();
+  input.style.left = labelRect.left - hostRect.left + "px";
+  input.style.top = labelRect.top - hostRect.top + "px";
   input.style.height = labelRect.height + "px";
 
   input.addEventListener("mousedown", (e) => e.stopPropagation());
@@ -766,7 +955,7 @@ function startRenameTab(idx) {
   });
 
   label.style.visibility = "hidden";
-  tabStrip.appendChild(input);
+  host.appendChild(input);
   requestAnimationFrame(() => {
     input.focus();
     input.select();
@@ -1137,10 +1326,17 @@ function showDirectory(dirPath) {
   applySlide();
   updateNavButtons();
 
-  // Watch directory for changes (new/deleted files)
+  // Watch directory for changes (new/deleted files). Using chokidar+fsevents
+  // because fs.watch on macOS over Dropbox-synced paths crashes the renderer
+  // in node::InternalCallbackScope::Close on stale FSEvents callbacks.
   try {
     let dirWatchTimeout = null;
-    const dirWatcher = fs.watch(dirPath, () => {
+    const dirWatcher = chokidar.watch(dirPath, {
+      ignoreInitial: true,
+      depth: 0,
+      persistent: true,
+    });
+    dirWatcher.on("all", () => {
       clearTimeout(dirWatchTimeout);
       dirWatchTimeout = setTimeout(() => {
         const currentWs = activeWorkspace();
@@ -1150,8 +1346,14 @@ function showDirectory(dirPath) {
         }
       }, 300);
     });
-    unwatchCurrent = () => dirWatcher.close();
-  } catch {}
+    dirWatcher.on("error", (e) => rendererLog("warn", `dir watcher error ${dirPath}: ${e.message || e}`));
+    unwatchCurrent = () => {
+      clearTimeout(dirWatchTimeout);
+      void dirWatcher.close();
+    };
+  } catch (e) {
+    rendererLog("warn", `Failed to watch dir ${dirPath}: ${e.message}`);
+  }
 }
 
 function showFile(filePath) {
@@ -1172,7 +1374,11 @@ function showFile(filePath) {
     renderMarkdown(content);
     try {
       let watchDebounce = null;
-      const watcher = fs.watch(filePath, () => {
+      const watcher = chokidar.watch(filePath, {
+        ignoreInitial: true,
+        persistent: true,
+      });
+      watcher.on("all", () => {
         if (watchDebounce) clearTimeout(watchDebounce);
         watchDebounce = setTimeout(() => {
           const updated = readFileContent(filePath);
@@ -1181,7 +1387,8 @@ function showFile(filePath) {
             renderMarkdown(updated);
         }, 100);
       });
-      unwatchCurrent = () => { if (watchDebounce) clearTimeout(watchDebounce); watcher.close(); };
+      watcher.on("error", (e) => rendererLog("warn", `file watcher error ${filePath}: ${e.message || e}`));
+      unwatchCurrent = () => { if (watchDebounce) clearTimeout(watchDebounce); void watcher.close(); };
     } catch (e) {
       rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
     }
@@ -1394,28 +1601,25 @@ function switchWorkspace(idx) {
   isViewingFile = false;
   isEditing = false;
 
-  // Hide all terminal containers from every workspace
-  workspaces.forEach((ws) => {
-    ws.sessions.forEach((s) => {
-      s.container.classList.remove("active");
-      s.container.style.display = "none";
-    });
-  });
+  // Detach the previously active workspace's terminals entirely, so only one
+  // workspace's terminals ever live in the DOM. This is what removes the
+  // re-layout storm that was crashing the renderer.
+  const prev = workspaces[activeWorkspaceIdx];
+  if (prev && prev !== workspaces[idx]) {
+    prev.sessions.forEach((s) => s.container.classList.remove("active"));
+    unmountWorkspace(prev);
+  }
 
   activeWorkspaceIdx = idx;
   const ws = workspaces[idx];
+  ws.collapsed = false; // the active workspace is always expanded
 
-  // Show this workspace's terminal containers
-  ws.sessions.forEach((s) => {
-    s.container.style.display = "";
-  });
-
-  // Activate the right tab
+  // Attach this workspace's terminals and reveal the active tab.
+  mountWorkspace(ws);
   if (ws.sessions.length > 0 && ws.activeSessionIdx >= 0) {
     activateTab(ws.activeSessionIdx);
   }
 
-  renderTabs();
   renderSidebar();
 
   // Restore file viewer state — capture values before showDirectory mutates them
@@ -1435,39 +1639,56 @@ function switchWorkspace(idx) {
 // ─── Sidebar rendering ───
 
 function renderSidebar() {
+  // Tear down any open assistant menu so it gets re-anchored after re-render.
+  const existingAssistantMenu = document.querySelector(".assistant-menu");
+  if (existingAssistantMenu) existingAssistantMenu.remove();
+
   workspaceList.innerHTML = "";
   workspaces.forEach((ws, i) => {
+    const isActive = i === activeWorkspaceIdx;
+    // Every workspace shows its full tab list at once. Only tab *rows* render
+    // here (cheap list items) -- terminals stay mounted only for the active
+    // workspace (see switchWorkspace), so this doesn't revive the re-layout
+    // storm. Clicking a tab in another workspace switches to it.
+    const expanded = true;
+
+    const group = document.createElement("div");
+    group.className = "ws-group" + (expanded ? " expanded" : "");
+
     const row = document.createElement("div");
-    row.className = "ws-row" + (i === activeWorkspaceIdx ? " active" : "");
+    row.className = "ws-row" + (isActive ? " active" : "");
 
     const tabCount = ws.sessions.length;
-
-    const letter = ws.name.charAt(0).toUpperCase();
     row.innerHTML =
-      '<span class="ws-letter">' +
-      escapeHtml(letter) +
-      "</span>" +
       '<span class="ws-name">' +
       escapeHtml(ws.name) +
       "</span>" +
-      '<span class="ws-count">' +
-      tabCount +
-      "</span>" +
       '<span class="ws-actions">' +
       '<button class="ws-action ws-rename" title="Rename">' +
-      '<svg width="11" height="11"><use href="#icon-pencil" /></svg>' +
+      '<svg width="13" height="13"><use href="#icon-pencil" /></svg>' +
       "</button>" +
       '<button class="ws-action ws-delete" title="Delete">' +
-      '<svg width="11" height="11"><use href="#icon-trash" /></svg>' +
+      '<svg width="13" height="13"><use href="#icon-trash" /></svg>' +
       "</button>" +
+      '<button class="ws-action ws-add" title="New tab in this workspace">' +
+      '<svg width="13" height="13"><use href="#icon-plus" /></svg>' +
+      "</button>" +
+      "</span>" +
+      '<span class="ws-count">' +
+      tabCount +
       "</span>";
 
-    attachWorkspaceDrag(row, i);
+    attachWorkspaceDrag(group, i);
 
     row.addEventListener("click", (e) => {
       if (performance.now() < workspaceClickSuppressUntil) {
         e.preventDefault();
         e.stopPropagation();
+        return;
+      }
+      if (e.target.closest(".ws-add")) {
+        e.stopPropagation();
+        createTabInWorkspace(i, defaultAssistant);
         return;
       }
       if (e.target.closest(".ws-rename")) {
@@ -1479,7 +1700,18 @@ function renderSidebar() {
       }
     });
 
-    workspaceList.appendChild(row);
+    group.appendChild(row);
+
+    if (expanded) {
+      const tabs = document.createElement("div");
+      tabs.className = "ws-tabs";
+      ws.sessions.forEach((s, si) => {
+        tabs.appendChild(buildTabRow(ws, i, s, si));
+      });
+      group.appendChild(tabs);
+    }
+
+    workspaceList.appendChild(group);
   });
 }
 
@@ -1530,12 +1762,21 @@ function startRenameWorkspace(idx) {
 // ─── Sidebar toggle ───
 
 const topbarLeft = document.getElementById("topbar-left");
+const topbar = document.getElementById("topbar");
 
 function applySidebarState() {
   sidebar.classList.toggle("collapsed", sidebarCollapsed);
   topbarLeft.classList.toggle("needs-traffic-space", sidebarCollapsed);
   sidebarToggleOpen.classList.toggle("hidden", sidebarCollapsed);
   sidebarToggleClosed.classList.toggle("hidden", !sidebarCollapsed);
+  // When the sidebar is open it carries the traffic lights + drag region, so
+  // the terminal's top bar is dead space -- collapse it so terminal output
+  // flows to the very top. When the sidebar is collapsed, the bar returns to
+  // hold the traffic lights and the expand button.
+  topbar.classList.toggle("sidebar-open", !sidebarCollapsed);
+  if (typeof fitActiveTerminal === "function") {
+    requestAnimationFrame(fitActiveTerminal);
+  }
 }
 
 let savedSidebarWidth = null;
@@ -1661,6 +1902,7 @@ setInterval(saveWorkspaceState, 10000);
       const ws = {
         id: wsData.id,
         name: wsData.name,
+        collapsed: !!wsData.collapsed,
         sessions: [],
         activeSessionIdx: -1,
         fileViewerState: wsData.fileViewerState || {
@@ -1681,13 +1923,17 @@ setInterval(saveWorkspaceState, 10000);
     activeWorkspaceIdx = targetIdx;
 
     renderSidebar();
+    renderAssistantFooter();
 
     // Recreate tabs for each workspace from saved names
     async function initWorkspaceTabs() {
       isRestoringWorkspaces = true;
       try {
+        // activeWorkspaceIdx stays pinned to targetIdx throughout so that only
+        // the target workspace's terminals get mounted/opened. Tabs for other
+        // workspaces are created detached (createTab targets them explicitly).
         for (let i = 0; i < workspaces.length; i++) {
-          activeWorkspaceIdx = i;
+          const targetWs = workspaces[i];
           const wsData = saved.workspaces[i];
           const sessionData =
             wsData.sessions && wsData.sessions.length > 0
@@ -1702,7 +1948,8 @@ setInterval(saveWorkspaceState, 10000);
           for (const savedSession of sessionData) {
             const session = await createTab(
               savedSession.name,
-              savedSession.assistant
+              savedSession.assistant,
+              targetWs
             );
             if (session) session.named = true; // don't auto-rename saved tabs
           }
@@ -1739,6 +1986,7 @@ setInterval(saveWorkspaceState, 10000);
     activeWorkspaceIdx = 0;
     applySidebarState();
     renderSidebar();
+    renderAssistantFooter();
     showDirectory(DEFAULT_DIR);
     createTab("Session 1");
     saveWorkspaceState();

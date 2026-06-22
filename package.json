@@ -1,7 +1,7 @@
 {
   "name": "producer",
   "productName": "Producer",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "PM workspace: Claude Code/Codex + file viewer",
   "main": "src/main/main.js",
   "scripts": {
@@ -59,6 +59,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "chokidar": "^3.6.0",
     "mammoth": "^1.12.0",
     "marked": "^17.0.5",
     "node-pty": "^1.1.0"
@@ -67,5 +68,8 @@
     "@electron/rebuild": "^4.0.3",
     "electron": "^41.7.1",
     "electron-builder": "^26.8.1"
+  },
+  "optionalDependencies": {
+    "fsevents": "^2.3.3"
   }
 }

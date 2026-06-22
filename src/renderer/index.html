@@ -265,6 +265,9 @@
           <div id="workspace-list">
             <!-- workspace rows injected by JS -->
           </div>
+          <div id="sidebar-footer">
+            <!-- assistant selector injected by JS -->
+          </div>
         </div>
 
         <!-- Sidebar resize handle -->
@@ -274,7 +277,8 @@
         <div id="main">
           <!-- Left: Claude Code terminal -->
           <div id="terminal-pane">
-            <!-- Tab strip lives in the terminal pane now -->
+            <!-- Slim drag/title bar (window move + macOS traffic lights). Tabs
+                 now live in the workspace sidebar, so this holds no tab strip. -->
             <div id="topbar">
               <div id="topbar-left">
                 <button
@@ -284,9 +288,6 @@
                 >
                   <svg width="14" height="14"><use href="#icon-sidebar" /></svg>
                 </button>
-              </div>
-              <div id="tab-strip">
-                <!-- tabs injected by JS -->
               </div>
             </div>
             <div id="terminal-body">
