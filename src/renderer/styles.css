@@ -103,16 +103,25 @@ body {
 
 /* ─── Top bar ─── */
 
+/* Slim drag/title bar. Tabs moved to the sidebar, so this is just window-move
+   space + room for the macOS traffic lights. No border so it reads as title
+   chrome, not a tab strip. */
 #topbar {
   -webkit-app-region: drag;
-  height: 46px;
+  height: 38px;
   display: flex;
   align-items: center;
   background: var(--bg);
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   padding-right: 4px;
   gap: 0;
+}
+
+/* Sidebar open: it owns the traffic lights + window drag, so the terminal's
+   top bar collapses and the terminal flows to the very top. */
+#topbar.sidebar-open {
+  height: 0;
+  overflow: hidden;
 }
 
 #topbar-left {
@@ -382,6 +391,119 @@ body {
   min-width: 60px;
 }
 
+/* ─── Sidebar workspace tree (tabs live here now) ─── */
+
+.ws-group {
+  display: block;
+}
+
+.ws-group.dragging {
+  position: fixed;
+  z-index: 1000;
+  opacity: 0.92;
+  pointer-events: none;
+  box-shadow: 0 14px 30px rgba(28, 25, 23, 0.18);
+  background: var(--bg-row-drag);
+  border-radius: var(--radius-sm);
+}
+
+/* Drop target highlight while a tab is dragged over another workspace. */
+.ws-row.ws-drop-target {
+  background: var(--bg-row-active);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--fg);
+}
+
+.ws-tabs {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 6px 0;
+  padding-left: 8px;
+}
+
+/* Override the horizontal-strip tab styling for the vertical tree. */
+.ws-tabs .tab {
+  height: 30px;
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+  padding: 0 8px;
+  gap: 7px;
+  font-size: 12.5px;
+}
+
+.ws-tabs .tab.active {
+  background: var(--bg-row-active);
+}
+
+/* Replace the bottom accent bar with a left accent bar in the vertical list. */
+.ws-tabs .tab.active::after {
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  right: auto;
+  width: 2px;
+  height: auto;
+}
+
+.ws-tabs .tab-actions {
+  bottom: 0;
+  padding-right: 4px;
+  background: linear-gradient(to right, transparent, var(--bg-sidebar) 40%);
+}
+
+.ws-tabs .tab.active .tab-actions {
+  background: linear-gradient(to right, transparent, var(--bg-row-active) 40%);
+}
+
+/* ─── Sidebar footer: the single assistant selector ─── */
+
+#sidebar-footer {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 6px 8px;
+}
+
+#sidebar-footer .assistant-picker {
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: none;
+}
+
+#sidebar-footer .assistant-new-tab {
+  width: 100%;
+  height: 32px;
+  justify-content: flex-start;
+  padding: 0 8px;
+  color: var(--fg-secondary);
+}
+
+#sidebar-footer .assistant-new-tab > span:not(.assistant-dot) {
+  flex: 1;
+  text-align: left;
+}
+
+/* Colored dot marking the selected assistant. */
+.assistant-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+
+.assistant-dot.assistant-claude {
+  background: #d97757;
+}
+
+.assistant-dot.assistant-codex {
+  background: #10a37f;
+}
+
 /* ─── Icon buttons ─── */
 
 .icon-btn {
@@ -487,7 +609,7 @@ body {
   -webkit-app-region: no-drag;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -527,23 +649,6 @@ body {
   font-weight: 600;
 }
 
-.ws-row .ws-letter {
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-muted);
-  background: var(--bg-surface);
-  border: none;
-  border-radius: 4px;
-  text-transform: uppercase;
-  box-shadow: none;
-}
-
 .ws-row .ws-name {
   flex: 1;
   overflow: hidden;
@@ -557,36 +662,29 @@ body {
   font-size: 11px;
   color: var(--fg-muted);
   flex-shrink: 0;
-  margin-left: auto;
+  min-width: 12px;
+  margin-left: 4px;
+  text-align: right;
 }
 
+/* Rename/delete actions: inline, hidden at rest, revealed on row hover. They
+   collapse to zero width so the resting row is just name + count. */
 .ws-row .ws-actions {
-  position: absolute;
-  right: 4px;
-  top: 0;
-  bottom: 0;
   display: flex;
   align-items: center;
-  gap: 1px;
-  padding-left: 16px;
-  padding-right: 4px;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity var(--transition);
   pointer-events: none;
-}
-
-.ws-row .ws-actions {
-  background: linear-gradient(to right, transparent, var(--bg-sidebar) 50%);
+  transition: opacity var(--transition), max-width var(--transition);
 }
 
 .ws-row:hover .ws-actions {
+  max-width: 84px;
   opacity: 1;
   pointer-events: auto;
-  background: linear-gradient(to right, transparent, var(--bg-row-active) 50%);
-}
-
-.ws-row.active .ws-actions {
-  background: linear-gradient(to right, transparent, var(--bg-row-active) 50%);
 }
 
 .ws-row .ws-action {
@@ -683,8 +781,14 @@ body {
 
 .terminal-session {
   position: absolute;
-  inset: 0;
-  padding: 16px 0 8px 20px;
+  /* Inset the whole terminal box rather than padding it. xterm sizes its grid
+     to the element, so internal padding clips the rightmost columns and pushes
+     the scrollbar into the pad. Insetting gives the same margins (matching the
+     20px left) while xterm fills a clean, padding-free box. */
+  /* Right inset is smaller than the left so the scrollbar rides near the pane
+     edge; xterm reserves the scrollbar's ~8px so text still clears it and reads
+     balanced against the 20px left. */
+  inset: 20px 8px 8px 20px;
   overflow: hidden;
   display: none;
 }

@@ -152,8 +152,57 @@ app.whenReady().then(() => {
   createWindow();
   log.info("Window created");
 
+  let rendererReloads = 0;
+  let lastReloadAt = 0;
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    log.error(`Render process gone: reason=${details.reason}, exitCode=${details.exitCode}`);
+    const aliveCount = Object.values(sessions).filter((s) => s.alive).length;
+    const sessionIds = Object.keys(sessions).join(",") || "none";
+
+    let dumpName = "(lookup failed)";
+    try {
+      const dumpDir = path.join(app.getPath("userData"), "Crashpad", "pending");
+      const files = fs.readdirSync(dumpDir).filter((f) => f.endsWith(".dmp"));
+      if (files.length === 0) {
+        dumpName = "(none in pending/)";
+      } else {
+        dumpName = files
+          .map((f) => ({ f, mtime: fs.statSync(path.join(dumpDir, f)).mtimeMs }))
+          .sort((a, b) => b.mtime - a.mtime)[0].f;
+      }
+    } catch (e) {
+      dumpName = `(error: ${e.message})`;
+    }
+
+    const breadcrumbs = log.recent();
+    const trail = breadcrumbs
+      .map((r) => `    [${r.ts}] [${r.level}] ${r.msg}`)
+      .join("\n");
+
+    log.error(
+      `Render process gone: reason=${details.reason}, exitCode=${details.exitCode}\n` +
+      `  active sessions: ${aliveCount} (ids: ${sessionIds})\n` +
+      `  crashpad dump: ${dumpName}\n` +
+      `  breadcrumbs (last ${breadcrumbs.length}):\n` +
+      trail
+    );
+    // Auto-recover the renderer instead of leaving a dead window. Guard against
+    // a crash loop: if it dies again within 5s, back off and stop reloading.
+    const now = Date.now();
+    if (now - lastReloadAt < 5000) {
+      rendererReloads++;
+    } else {
+      rendererReloads = 0;
+    }
+    lastReloadAt = now;
+    if (details.reason === "clean-exit" || details.reason === "killed") return;
+    if (rendererReloads >= 3) {
+      log.error("Renderer crashed repeatedly; not reloading again to avoid a loop.");
+      return;
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      log.warn(`Reloading renderer (attempt ${rendererReloads + 1})`);
+      mainWindow.reload();
+    }
   });
 
   ipcMain.on("log:renderer", (_event, { level, msg }) => {
