@@ -235,6 +235,7 @@ function beginWorkspaceDrag(state, event) {
   const rect = row.getBoundingClientRect();
   state.dragging = true;
   state.offsetY = event.clientY - rect.top;
+  row.setPointerCapture(state.pointerId);
 
   placeholder.style.height = rect.height + "px";
   workspaceList.insertBefore(placeholder, row);
@@ -344,7 +345,6 @@ function attachWorkspaceDrag(row, idx) {
     };
 
     workspaceDragState = state;
-    row.setPointerCapture(event.pointerId);
     row.addEventListener("pointermove", state.onPointerMove);
     row.addEventListener("pointerup", state.onPointerUp);
     row.addEventListener("pointercancel", state.onPointerUp);
