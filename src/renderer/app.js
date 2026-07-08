@@ -1470,9 +1470,14 @@ function showDirectory(dirPath) {
     });
     dirWatcher.on("error", (e) => rendererLog("warn", `dir watcher error ${dirPath}: ${e.message || e}`));
     unwatchCurrent = () => {
-      dirWatcher.closed = true;
       clearTimeout(dirWatchTimeout);
-      dirWatcher.close().catch((e) => rendererLog("warn", `dir watcher close failed ${dirPath}: ${e.message || e}`));
+      // chokidar's close() sets its own `closed` flag synchronously (which the
+      // debounce guards above read); do NOT set it ourselves, or close() takes
+      // its early-return branch and returns undefined instead of a promise.
+      const closeResult = dirWatcher.close();
+      if (closeResult && typeof closeResult.catch === "function") {
+        closeResult.catch((e) => rendererLog("warn", `dir watcher close failed ${dirPath}: ${e.message || e}`));
+      }
     };
   } catch (e) {
     rendererLog("warn", `Failed to watch dir ${dirPath}: ${e.message}`);
@@ -1514,9 +1519,13 @@ function showFile(filePath) {
       });
       watcher.on("error", (e) => rendererLog("warn", `file watcher error ${filePath}: ${e.message || e}`));
       unwatchCurrent = () => {
-        watcher.closed = true;
         if (watchDebounce) clearTimeout(watchDebounce);
-        watcher.close().catch((e) => rendererLog("warn", `file watcher close failed ${filePath}: ${e.message || e}`));
+        // See dir watcher above: chokidar sets its own `closed` flag; setting it
+        // ourselves makes close() return undefined instead of a promise.
+        const closeResult = watcher.close();
+        if (closeResult && typeof closeResult.catch === "function") {
+          closeResult.catch((e) => rendererLog("warn", `file watcher close failed ${filePath}: ${e.message || e}`));
+        }
       };
     } catch (e) {
       rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
