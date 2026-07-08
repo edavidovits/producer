@@ -235,6 +235,7 @@ function beginWorkspaceDrag(state, event) {
   const rect = row.getBoundingClientRect();
   state.dragging = true;
   state.offsetY = event.clientY - rect.top;
+  row.setPointerCapture(state.pointerId);
 
   placeholder.style.height = rect.height + "px";
   workspaceList.insertBefore(placeholder, row);
@@ -344,12 +345,55 @@ function attachWorkspaceDrag(row, idx) {
     };
 
     workspaceDragState = state;
-    row.setPointerCapture(event.pointerId);
     row.addEventListener("pointermove", state.onPointerMove);
     row.addEventListener("pointerup", state.onPointerUp);
     row.addEventListener("pointercancel", state.onPointerUp);
   });
 }
+
+function workspaceGroupIndexForElement(el) {
+  const group = el && el.closest(".ws-group");
+  if (!group) return -1;
+  return Array.from(workspaceList.children).indexOf(group);
+}
+
+workspaceList.addEventListener(
+  "click",
+  (event) => {
+    const hitTarget =
+      document.elementFromPoint(event.clientX, event.clientY) || event.target;
+    if (performance.now() < workspaceClickSuppressUntil) return;
+    if (
+      hitTarget.closest(".ws-action") ||
+      hitTarget.closest(".ws-rename-input") ||
+      hitTarget.closest(".tab-action")
+    ) {
+      return;
+    }
+
+    const tab = hitTarget.closest(".ws-tabs .tab");
+    if (tab) {
+      const wsIdx = workspaceGroupIndexForElement(tab);
+      if (wsIdx === -1 || wsIdx === activeWorkspaceIdx) return;
+      const tabIdx = Array.from(tab.parentNode.children).indexOf(tab);
+      if (tabIdx >= 0) workspaces[wsIdx].activeSessionIdx = tabIdx;
+      event.preventDefault();
+      event.stopPropagation();
+      switchWorkspace(wsIdx);
+      return;
+    }
+
+    const row = hitTarget.closest(".ws-row");
+    if (!row) return;
+    const wsIdx = workspaceGroupIndexForElement(row);
+    if (wsIdx === -1 || wsIdx === activeWorkspaceIdx) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    switchWorkspace(wsIdx);
+  },
+  true
+);
 
 // ─── Active workspace helpers ───
 
@@ -1426,9 +1470,14 @@ function showDirectory(dirPath) {
     });
     dirWatcher.on("error", (e) => rendererLog("warn", `dir watcher error ${dirPath}: ${e.message || e}`));
     unwatchCurrent = () => {
-      dirWatcher.closed = true;
       clearTimeout(dirWatchTimeout);
-      dirWatcher.close().catch((e) => rendererLog("warn", `dir watcher close failed ${dirPath}: ${e.message || e}`));
+      // chokidar's close() sets its own `closed` flag synchronously (which the
+      // debounce guards above read); do NOT set it ourselves, or close() takes
+      // its early-return branch and returns undefined instead of a promise.
+      const closeResult = dirWatcher.close();
+      if (closeResult && typeof closeResult.catch === "function") {
+        closeResult.catch((e) => rendererLog("warn", `dir watcher close failed ${dirPath}: ${e.message || e}`));
+      }
     };
   } catch (e) {
     rendererLog("warn", `Failed to watch dir ${dirPath}: ${e.message}`);
@@ -1470,9 +1519,13 @@ function showFile(filePath) {
       });
       watcher.on("error", (e) => rendererLog("warn", `file watcher error ${filePath}: ${e.message || e}`));
       unwatchCurrent = () => {
-        watcher.closed = true;
         if (watchDebounce) clearTimeout(watchDebounce);
-        watcher.close().catch((e) => rendererLog("warn", `file watcher close failed ${filePath}: ${e.message || e}`));
+        // See dir watcher above: chokidar sets its own `closed` flag; setting it
+        // ourselves makes close() return undefined instead of a promise.
+        const closeResult = watcher.close();
+        if (closeResult && typeof closeResult.catch === "function") {
+          closeResult.catch((e) => rendererLog("warn", `file watcher close failed ${filePath}: ${e.message || e}`));
+        }
       };
     } catch (e) {
       rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
