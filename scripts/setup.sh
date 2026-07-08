@@ -1,16 +1,49 @@
 #!/bin/bash
-# Producer -- one-command setup for a new machine
-# Usage: curl the repo, run this script
+# Producer setup for a new machine
 
 set -e
 
+CERT_NAME="Producer Dev"
+REGENERATE_CERT=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --regenerate-cert)
+      REGENERATE_CERT=1
+      ;;
+    -h|--help)
+      echo "Usage: scripts/setup.sh [--regenerate-cert]"
+      echo ""
+      echo "Do not regenerate the signing certificate casually. macOS privacy"
+      echo "grants are keyed to the certificate leaf hash, so a new certificate"
+      echo "requires toggling Producer permissions off and on in System Settings."
+      exit 0
+      ;;
+    *)
+      echo "[error] Unknown argument: $arg" >&2
+      echo "Usage: scripts/setup.sh [--regenerate-cert]" >&2
+      exit 2
+      ;;
+  esac
+done
+
 echo "=== Producer Setup ==="
 
-# 1. Create self-signed code signing certificate (persists in keychain)
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "Producer Dev"; then
-  echo "[ok] Signing certificate 'Producer Dev' already exists"
-else
-  echo "[...] Creating self-signed certificate 'Producer Dev'..."
+cert_exists() {
+  security find-certificate -c "$CERT_NAME" >/dev/null 2>&1
+}
+
+valid_identity_exists() {
+  security find-identity -v -p codesigning 2>/dev/null | grep -F "\"$CERT_NAME\"" >/dev/null
+}
+
+print_cert_sha1() {
+  security find-certificate -c "$CERT_NAME" -Z 2>/dev/null \
+    | awk '/SHA-1 hash:/ { print $3; exit }'
+}
+
+create_cert() {
+  echo "[...] Creating self-signed certificate '$CERT_NAME'..."
   CERT_TMP=$(mktemp -d)
   cat > "$CERT_TMP/cert.conf" << 'CERTEOF'
 [req]
@@ -51,7 +84,32 @@ CERTEOF
     -P producer -T /usr/bin/codesign
 
   rm -rf "$CERT_TMP"
+  LEAF_SHA1=$(print_cert_sha1)
   echo "[ok] Certificate created and imported"
+  echo "[info] $CERT_NAME leaf SHA-1: ${LEAF_SHA1:-unknown}"
+  echo "[info] macOS privacy grants are keyed to this leaf hash."
+}
+
+# 1. Create self-signed code signing certificate (persists in keychain)
+if [ "$REGENERATE_CERT" -eq 1 ]; then
+  if cert_exists; then
+    echo "[warn] Regenerating '$CERT_NAME'. Existing macOS privacy grants for Producer will stop applying."
+    security delete-certificate -c "$CERT_NAME" >/dev/null 2>&1 || true
+  fi
+  create_cert
+elif valid_identity_exists; then
+  LEAF_SHA1=$(print_cert_sha1)
+  echo "[ok] Signing certificate '$CERT_NAME' is valid"
+  echo "[info] $CERT_NAME leaf SHA-1: ${LEAF_SHA1:-unknown}"
+else
+  if cert_exists && [ "$REGENERATE_CERT" -ne 1 ]; then
+    echo "[error] A '$CERT_NAME' certificate exists, but it is not a valid code signing identity." >&2
+    echo "Do not regenerate it silently. macOS privacy grants are keyed to the certificate leaf hash." >&2
+    echo "Fix the keychain identity, or rerun with --regenerate-cert and then re-grant Producer permissions in System Settings." >&2
+    exit 1
+  fi
+
+  create_cert
 fi
 
 # 2. Install dependencies

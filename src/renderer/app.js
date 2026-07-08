@@ -426,10 +426,19 @@ async function createTab(name, assistant, targetWs) {
   if (!ws) return;
 
   const assistantKey = resolveAssistant(assistant || defaultAssistant);
-  const id = await window.ipc.invoke("session:create", {
-    cwd: DEFAULT_DIR,
-    assistant: assistantKey,
-  });
+  let id;
+  try {
+    id = await window.ipc.invoke("session:create", {
+      cwd: DEFAULT_DIR,
+      assistant: assistantKey,
+    });
+  } catch (e) {
+    rendererLog(
+      "error",
+      `Failed to create ${assistantKey} session: ${e && e.message ? e.message : e}`
+    );
+    return null;
+  }
   rendererLog(
     "info",
     `Tab created: session=${id}, assistant=${assistantKey}, workspace=${ws.id}`
@@ -1117,7 +1126,8 @@ function getFileIconId(entry) {
 function readDir(dirPath) {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    return entries
+    return {
+      entries: entries
       .filter((e) => !e.name.startsWith("."))
       .sort((a, b) => {
         if (a.isDirectory() && !b.isDirectory()) return -1;
@@ -1128,29 +1138,81 @@ function readDir(dirPath) {
         name: e.name,
         path: path.join(dirPath, e.name),
         isDirectory: e.isDirectory(),
-      }));
+      })),
+      error: null,
+    };
   } catch (e) {
     rendererLog("warn", `Failed to read directory ${dirPath}: ${e.message}`);
-    return [];
+    return { entries: [], error: e };
   }
 }
 
 function readFileContent(filePath) {
   try {
-    return fs.readFileSync(filePath, "utf-8");
+    return { content: fs.readFileSync(filePath, "utf-8"), error: null };
   } catch (e) {
     rendererLog("warn", `Failed to read file ${filePath}: ${e.message}`);
-    return null;
+    return { content: null, error: e };
   }
 }
 
 function readFileBuffer(filePath) {
   try {
-    return fs.readFileSync(filePath);
+    return { buffer: fs.readFileSync(filePath), error: null };
   } catch (e) {
     rendererLog("warn", `Failed to read file buffer ${filePath}: ${e.message}`);
-    return null;
+    return { buffer: null, error: e };
   }
+}
+
+function isPermissionError(error) {
+  return error && (error.code === "EPERM" || error.code === "EACCES");
+}
+
+function isCloudStoragePath(filePath) {
+  return (
+    filePath.includes("/Library/CloudStorage/") ||
+    filePath.includes("/Dropbox") ||
+    filePath.includes("Dropbox-")
+  );
+}
+
+function renderPermissionError(targetPath, error, retry) {
+  const cloudStorage = isCloudStoragePath(targetPath);
+  const panel = document.createElement("div");
+  panel.className = "permission-state";
+  panel.innerHTML =
+    '<div class="permission-icon">' +
+    iconSvg("lock", 30) +
+    "</div>" +
+    "<h2>Producer needs permission</h2>" +
+    "<p>" +
+    (cloudStorage
+      ? "macOS blocked access to this cloud storage folder. Give Producer Full Disk Access, or enable its file-provider permission row if macOS shows one."
+      : "macOS blocked access to this folder. Enable Producer under Files & Folders, or give it Full Disk Access.") +
+    "</p>" +
+    '<p class="permission-path">' +
+    escapeHtml(targetPath) +
+    "</p>" +
+    '<p class="permission-hint">If you recently rebuilt Producer, toggle its permission off and on. macOS drops grants when the app signature changes.</p>' +
+    '<div class="permission-actions">' +
+    '<button type="button" class="permission-button primary">Open Privacy Settings</button>' +
+    '<button type="button" class="permission-button">Retry</button>' +
+    "</div>";
+
+  const buttons = panel.querySelectorAll(".permission-button");
+  buttons[0].addEventListener("click", () => {
+    window.ipc.invoke(
+      "app:openPrivacySettings",
+      cloudStorage ? "allFiles" : "filesAndFolders"
+    );
+  });
+  buttons[1].addEventListener("click", retry);
+
+  viewerContent.innerHTML = "";
+  viewerContent.appendChild(panel);
+  applySlide();
+  updateNavButtons();
 }
 
 function sanitizeHtml(html) {
@@ -1281,7 +1343,21 @@ function showDirectory(dirPath) {
     ws.fileViewerState.currentDir = dirPath;
   }
   updateBreadcrumb(dirPath);
-  const entries = readDir(dirPath);
+  const result = readDir(dirPath);
+  if (result.error) {
+    if (isPermissionError(result.error)) {
+      renderPermissionError(dirPath, result.error, () => showDirectory(dirPath));
+      return;
+    }
+    viewerContent.innerHTML =
+      '<div class="empty-state">' +
+      iconSvg("folder", 32) +
+      "<div>Cannot read folder</div></div>";
+    applySlide();
+    updateNavButtons();
+    return;
+  }
+  const entries = result.entries;
   if (entries.length === 0) {
     viewerContent.innerHTML =
       '<div class="empty-state">' +
@@ -1337,8 +1413,10 @@ function showDirectory(dirPath) {
       persistent: true,
     });
     dirWatcher.on("all", () => {
+      if (dirWatcher.closed) return;
       clearTimeout(dirWatchTimeout);
       dirWatchTimeout = setTimeout(() => {
+        if (dirWatcher.closed) return;
         const currentWs = activeWorkspace();
         if (currentWs && currentWs.fileViewerState.currentDir === dirPath && !isViewingFile) {
           slideDirection = null; // no animation for refresh
@@ -1348,8 +1426,9 @@ function showDirectory(dirPath) {
     });
     dirWatcher.on("error", (e) => rendererLog("warn", `dir watcher error ${dirPath}: ${e.message || e}`));
     unwatchCurrent = () => {
+      dirWatcher.closed = true;
       clearTimeout(dirWatchTimeout);
-      void dirWatcher.close();
+      dirWatcher.close().catch((e) => rendererLog("warn", `dir watcher close failed ${dirPath}: ${e.message || e}`));
     };
   } catch (e) {
     rendererLog("warn", `Failed to watch dir ${dirPath}: ${e.message}`);
@@ -1369,9 +1448,9 @@ function showFile(filePath) {
   showFileHeader(filePath);
   const ext = path.extname(filePath).slice(1).toLowerCase();
   if (ext === "md" || ext === "mdx") {
-    const content = readFileContent(filePath);
-    if (content === null) return showError();
-    renderMarkdown(content);
+    const result = readFileContent(filePath);
+    if (result.error) return showError(filePath, result.error);
+    renderMarkdown(result.content);
     try {
       let watchDebounce = null;
       const watcher = chokidar.watch(filePath, {
@@ -1379,25 +1458,31 @@ function showFile(filePath) {
         persistent: true,
       });
       watcher.on("all", () => {
+        if (watcher.closed) return;
         if (watchDebounce) clearTimeout(watchDebounce);
         watchDebounce = setTimeout(() => {
+          if (watcher.closed) return;
           const updated = readFileContent(filePath);
           const currentWs = activeWorkspace();
-          if (updated !== null && currentWs && currentWs.fileViewerState.currentPath === filePath)
-            renderMarkdown(updated);
+          if (!updated.error && currentWs && currentWs.fileViewerState.currentPath === filePath)
+            renderMarkdown(updated.content);
         }, 100);
       });
       watcher.on("error", (e) => rendererLog("warn", `file watcher error ${filePath}: ${e.message || e}`));
-      unwatchCurrent = () => { if (watchDebounce) clearTimeout(watchDebounce); void watcher.close(); };
+      unwatchCurrent = () => {
+        watcher.closed = true;
+        if (watchDebounce) clearTimeout(watchDebounce);
+        watcher.close().catch((e) => rendererLog("warn", `file watcher close failed ${filePath}: ${e.message || e}`));
+      };
     } catch (e) {
       rendererLog("warn", `Failed to watch file ${filePath}: ${e.message}`);
     }
   } else if (ext === "docx") {
-    const buf = readFileBuffer(filePath);
-    if (buf === null) return showError();
+    const result = readFileBuffer(filePath);
+    if (result.error) return showError(filePath, result.error);
     const expectedPath = filePath;
     mammoth
-      .convertToHtml({ buffer: buf })
+      .convertToHtml({ buffer: result.buffer })
       .then((r) => {
         const currentWs = activeWorkspace();
         if (currentWs && currentWs.fileViewerState.currentPath !== expectedPath) return;
@@ -1407,7 +1492,7 @@ function showFile(filePath) {
       .catch((e) => {
         rendererLog("warn", `Failed to convert docx ${filePath}: ${e.message || e}`);
         const currentWs = activeWorkspace();
-        if (currentWs && currentWs.fileViewerState.currentPath === expectedPath) showError();
+        if (currentWs && currentWs.fileViewerState.currentPath === expectedPath) showError(filePath, e);
       });
   } else if (["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ext)) {
     viewerContent.innerHTML =
@@ -1415,16 +1500,20 @@ function showFile(filePath) {
       encodeURI(filePath) +
       '" /></div>';
   } else {
-    const content = readFileContent(filePath);
-    if (content === null) return showError();
+    const result = readFileContent(filePath);
+    if (result.error) return showError(filePath, result.error);
     viewerContent.innerHTML =
-      '<pre class="plain-text">' + escapeHtml(content) + "</pre>";
+      '<pre class="plain-text">' + escapeHtml(result.content) + "</pre>";
   }
   applySlide();
   updateNavButtons();
 }
 
-function showError() {
+function showError(filePath, error) {
+  if (isPermissionError(error)) {
+    renderPermissionError(filePath, error, () => showFile(filePath));
+    return;
+  }
   viewerContent.innerHTML =
     '<div class="empty-state">' +
     iconSvg("file", 32) +
@@ -1495,15 +1584,15 @@ btnEditFile.addEventListener("click", () => {
   if (isEditing) {
     saveEditor();
     cleanupEditorTimeout();
-    const content = readFileContent(currentPath);
-    if (content !== null) renderMarkdown(content);
+    const result = readFileContent(currentPath);
+    if (!result.error) renderMarkdown(result.content);
     isEditing = false;
     btnEditFile.innerHTML =
       '<svg width="16" height="16"><use href="#icon-pencil" /></svg>';
     btnEditFile.title = "Edit";
   } else {
-    const content = readFileContent(currentPath);
-    if (content === null) return;
+    const result = readFileContent(currentPath);
+    if (result.error) return showError(currentPath, result.error);
     cleanupWatch(); // Stop file watcher so external changes don't overwrite edits
     isEditing = true;
     btnEditFile.innerHTML =
@@ -1511,7 +1600,7 @@ btnEditFile.addEventListener("click", () => {
     btnEditFile.title = "Done";
     const textarea = document.createElement("textarea");
     textarea.className = "md-editor";
-    textarea.value = content;
+    textarea.value = result.content;
     textarea.spellcheck = true;
     viewerContent.innerHTML = "";
     viewerContent.appendChild(textarea);

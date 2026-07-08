@@ -1,13 +1,13 @@
 {
   "name": "producer",
   "productName": "Producer",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "PM workspace: Claude Code/Codex + file viewer",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder --mac --dir && rm -rf /Applications/Producer.app && ditto dist/mac-arm64/Producer.app /Applications/Producer.app",
+    "build": "scripts/check-signing.sh prebuild && electron-builder --mac --dir && scripts/check-signing.sh postbuild && rm -rf /Applications/Producer.app && ditto dist/mac-arm64/Producer.app /Applications/Producer.app",
     "dist": "electron-builder --mac",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty"
@@ -25,7 +25,11 @@
       "identity": "Producer Dev",
       "extendInfo": {
         "NSDocumentsFolderUsageDescription": "Producer needs access to your files to display them in the file viewer.",
-        "NSDesktopFolderUsageDescription": "Producer needs access to your files to display them in the file viewer."
+        "NSDesktopFolderUsageDescription": "Producer needs access to your files to display them in the file viewer.",
+        "NSDownloadsFolderUsageDescription": "Producer needs access to Downloads to display your files in the file viewer.",
+        "NSFileProviderDomainUsageDescription": "Producer needs access to cloud storage folders such as Dropbox to display your files in the file viewer.",
+        "NSNetworkVolumesUsageDescription": "Producer needs access to network volumes to display your files in the file viewer.",
+        "NSRemovableVolumesUsageDescription": "Producer needs access to removable volumes to display your files in the file viewer."
       }
     },
     "dmg": {
