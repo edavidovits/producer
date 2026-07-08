@@ -36,6 +36,52 @@ function resolveAssistant(key) {
   return ASSISTANTS[key] ? key : "claude";
 }
 
+function isUsableDirectory(dirPath) {
+  if (!dirPath || typeof dirPath !== "string") return false;
+  try {
+    return fs.statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function resolveSessionCwd(cwd, sessionId) {
+  if (isUsableDirectory(cwd)) return cwd;
+  const fallback = process.env.HOME || app.getPath("home");
+  if (cwd) {
+    log.warn(`Session ${sessionId} cwd unavailable (${cwd}); falling back to ${fallback}`);
+  }
+  return fallback;
+}
+
+function sessionEnv() {
+  const env = { ...process.env };
+  delete env.NO_COLOR;
+  delete env.FORCE_COLOR;
+  env.TERM = "xterm-256color";
+  env.COLORTERM = "truecolor";
+  env.CLICOLOR = "1";
+  env.TERM_PROGRAM = "Producer";
+  return env;
+}
+
+function killAllSessions(reason) {
+  const ids = Object.keys(sessions);
+  if (ids.length === 0) return;
+  log.warn(`Killing ${ids.length} session(s): ${reason}`);
+  ids.forEach((id) => {
+    const session = sessions[id];
+    if (!session) return;
+    try {
+      if (session.alive && session.pty) session.pty.kill();
+    } catch (e) {
+      log.warn(`Session ${id} kill failed during ${reason}: ${e.message}`);
+    }
+    session.alive = false;
+    delete sessions[id];
+  });
+}
+
 // ─── Window state persistence ───
 
 const stateFile = path.join(app.getPath("userData"), "window-state.json");
@@ -104,18 +150,26 @@ function createSession(cwd, assistantKey) {
   const id = nextSessionId++;
   const assistant = resolveAssistant(assistantKey);
   const assistantConfig = ASSISTANTS[assistant];
+  const sessionCwd = resolveSessionCwd(cwd, id);
   log.info(
-    `Session ${id} creating (${assistantConfig.label}, cwd: ${cwd || "default"})`
+    `Session ${id} creating (${assistantConfig.label}, cwd: ${sessionCwd})`
   );
-  const shell = process.env.SHELL || "/bin/zsh";
+  const shellPath = process.env.SHELL || "/bin/zsh";
 
-  const ptyProcess = pty.spawn(shell, ["-l", "-c", assistantConfig.command], {
-    name: "xterm-256color",
-    cols: 80,
-    rows: 24,
-    cwd: cwd || process.env.HOME,
-    env: { ...process.env, TERM: "xterm-256color" },
-  });
+  let ptyProcess;
+  try {
+    ptyProcess = pty.spawn(shellPath, ["-l", "-c", assistantConfig.command], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: sessionCwd,
+      env: sessionEnv(),
+    });
+  } catch (e) {
+    const message = `Session ${id} failed to spawn ${assistantConfig.label}: ${e.message}`;
+    log.error(message);
+    throw new Error(message);
+  }
 
   sessions[id] = { pty: ptyProcess, alive: true };
 
@@ -141,6 +195,18 @@ function createSession(cwd, assistantKey) {
 
 app.whenReady().then(() => {
   log.info("App ready");
+  let inApplicationsFolder = false;
+  try {
+    inApplicationsFolder = app.isInApplicationsFolder();
+  } catch (e) {
+    log.warn(`Could not check Applications folder status: ${e.message}`);
+  }
+  log.info(
+    `App fingerprint: version=${app.getVersion()}, inApplicationsFolder=${inApplicationsFolder}, exePath=${process.execPath}`
+  );
+  if (process.platform === "darwin" && !inApplicationsFolder) {
+    log.warn("Producer is not running from /Applications; macOS privacy grants may not match the installed app.");
+  }
   nativeTheme.themeSource = "system";
   nativeTheme.on("updated", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -185,6 +251,7 @@ app.whenReady().then(() => {
       `  breadcrumbs (last ${breadcrumbs.length}):\n` +
       trail
     );
+    killAllSessions(`renderer gone (${details.reason})`);
     // Auto-recover the renderer instead of leaving a dead window. Guard against
     // a crash loop: if it dies again within 5s, back off and stop reloading.
     const now = Date.now();
@@ -250,6 +317,17 @@ app.whenReady().then(() => {
     return shell.showItemInFolder(filePath);
   });
 
+  ipcMain.handle("app:openPrivacySettings", (_event, pane) => {
+    const panes = {
+      allFiles: "Privacy_AllFiles",
+      filesAndFolders: "Privacy_FilesAndFolders",
+    };
+    const targetPane = panes[pane] || panes.allFiles;
+    return shell.openExternal(
+      `x-apple.systempreferences:com.apple.preference.security?${targetPane}`
+    );
+  });
+
   ipcMain.handle("session:create", (_event, payload) => {
     if (payload && typeof payload === "object") {
       return createSession(payload.cwd, payload.assistant);
@@ -257,13 +335,35 @@ app.whenReady().then(() => {
     return createSession(payload, "claude");
   });
 
-  ipcMain.on("terminal:input", (_event, { id, data }) => {
+  ipcMain.on("terminal:input", (_event, payload) => {
+    if (!payload || typeof payload !== "object") {
+      log.warn("Ignoring terminal input with invalid payload");
+      return;
+    }
+    const { id, data } = payload;
+    if (typeof data !== "string") {
+      log.warn(`Ignoring terminal input for session ${id}: data must be a string`);
+      return;
+    }
     if (sessions[id] && sessions[id].alive) {
-      sessions[id].pty.write(data);
+      try {
+        sessions[id].pty.write(data);
+      } catch (e) {
+        log.warn(`Session ${id} write failed: ${e.message}`);
+      }
     }
   });
 
-  ipcMain.on("terminal:resize", (_event, { id, cols, rows }) => {
+  ipcMain.on("terminal:resize", (_event, payload) => {
+    if (!payload || typeof payload !== "object") {
+      log.warn("Ignoring terminal resize with invalid payload");
+      return;
+    }
+    const { id, cols, rows } = payload;
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) {
+      log.warn(`Ignoring terminal resize for session ${id}: invalid size ${cols}x${rows}`);
+      return;
+    }
     if (sessions[id] && sessions[id].alive) {
       try {
         sessions[id].pty.resize(cols, rows);
@@ -273,18 +373,31 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.on("session:kill", (_event, { id }) => {
+  ipcMain.on("session:kill", (_event, payload) => {
+    if (!payload || typeof payload !== "object") {
+      log.warn("Ignoring session kill with invalid payload");
+      return;
+    }
+    const { id } = payload;
     if (sessions[id] && sessions[id].alive) {
-      sessions[id].pty.kill();
+      try {
+        sessions[id].pty.kill();
+      } catch (e) {
+        log.warn(`Session ${id} kill failed: ${e.message}`);
+      }
       sessions[id].alive = false;
     }
     delete sessions[id];
   });
 });
 
+app.on("child-process-gone", (_event, details) => {
+  log.warn(
+    `Child process gone: type=${details.type}, reason=${details.reason}, exitCode=${details.exitCode}, serviceName=${details.serviceName || "n/a"}`
+  );
+});
+
 app.on("window-all-closed", () => {
-  Object.values(sessions).forEach((s) => {
-    if (s.alive) s.pty.kill();
-  });
+  killAllSessions("window-all-closed");
   app.quit();
 });

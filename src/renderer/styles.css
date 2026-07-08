@@ -1308,6 +1308,89 @@ body {
   opacity: 0.4;
 }
 
+/* ─── Permission state ─── */
+
+.permission-state {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 40px;
+  color: var(--fg);
+}
+
+.permission-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.permission-state h2 {
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 650;
+  margin: 4px 0 0;
+}
+
+.permission-state p {
+  max-width: 520px;
+  color: var(--fg-secondary);
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.permission-path {
+  font-family: var(--font-mono);
+  color: var(--fg-muted) !important;
+  word-break: break-word;
+}
+
+.permission-hint {
+  padding-top: 4px;
+}
+
+.permission-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.permission-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.permission-button:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.permission-button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.permission-button.primary:hover {
+  filter: brightness(0.96);
+}
+
 /* ─── Markdown editor ─── */
 
 .md-editor {
