@@ -351,6 +351,50 @@ function attachWorkspaceDrag(row, idx) {
   });
 }
 
+function workspaceGroupIndexForElement(el) {
+  const group = el && el.closest(".ws-group");
+  if (!group) return -1;
+  return Array.from(workspaceList.children).indexOf(group);
+}
+
+workspaceList.addEventListener(
+  "click",
+  (event) => {
+    const hitTarget =
+      document.elementFromPoint(event.clientX, event.clientY) || event.target;
+    if (performance.now() < workspaceClickSuppressUntil) return;
+    if (
+      hitTarget.closest(".ws-action") ||
+      hitTarget.closest(".ws-rename-input") ||
+      hitTarget.closest(".tab-action")
+    ) {
+      return;
+    }
+
+    const tab = hitTarget.closest(".ws-tabs .tab");
+    if (tab) {
+      const wsIdx = workspaceGroupIndexForElement(tab);
+      if (wsIdx === -1 || wsIdx === activeWorkspaceIdx) return;
+      const tabIdx = Array.from(tab.parentNode.children).indexOf(tab);
+      if (tabIdx >= 0) workspaces[wsIdx].activeSessionIdx = tabIdx;
+      event.preventDefault();
+      event.stopPropagation();
+      switchWorkspace(wsIdx);
+      return;
+    }
+
+    const row = hitTarget.closest(".ws-row");
+    if (!row) return;
+    const wsIdx = workspaceGroupIndexForElement(row);
+    if (wsIdx === -1 || wsIdx === activeWorkspaceIdx) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    switchWorkspace(wsIdx);
+  },
+  true
+);
+
 // ─── Active workspace helpers ───
 
 function activeWorkspace() {
